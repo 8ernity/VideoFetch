@@ -34,6 +34,30 @@ A modern, responsive web application for downloading publicly accessible videos 
 
 ---
 
+## 🔄 Data Flow Diagram
+
+```mermaid
+graph LR
+
+    USER[User]
+    UI[Frontend]
+    SYSTEM[Backend System]
+    ENGINE[Video Engine]
+    STORAGE[(Storage)]
+
+    USER -->|Paste URL| UI
+    UI -->|Send Request| SYSTEM
+
+    SYSTEM -->|Process URL| ENGINE
+    ENGINE -->|Extract Streams| SYSTEM
+
+    SYSTEM -->|Download File| STORAGE
+    STORAGE -->|Return File| SYSTEM
+
+    SYSTEM -->|Send Response| UI
+    UI -->|Show Download| USER
+```
+
 ## Project Structure
 
 ```
