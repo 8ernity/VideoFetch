@@ -15,10 +15,12 @@ const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
 let FFMPEG_PATH = 'ffmpeg'; // default
 const TIMEOUT_MS = 120_000;
 const PROXY = process.env.PROXY_URL || '';
-const TEMP_DIR = path.join(process.cwd(), 'temp_downloads');
+const TEMP_DIR = process.env.NODE_ENV === 'production' 
+  ? '/tmp' 
+  : path.join(process.cwd(), 'temp_downloads');
 
 // Ensure temp directory exists
-if (!fs.existsSync(TEMP_DIR)) {
+if (process.env.NODE_ENV !== 'production' && !fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
@@ -45,30 +47,30 @@ try {
 function getBaseArgs(url, opts = {}) {
   const args = [
     '--no-warnings',
-    '--quiet',                        // strictly no logs to stdout
+    '--quiet',
     '--no-playlist',
-    '--no-check-certificates',       // bypass SSL cert issues
-    '--geo-bypass',                   // bypass geo-restrictions
+    '--no-check-certificates',
+    '--geo-bypass',
     '--socket-timeout', '30',
     '--retries', '3',
     '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     '--add-header', 'Accept-Language:en-US,en;q=0.9',
-    '--no-part',                      // avoid .part files when possible
-    '--no-mtime',                     // don't try to set modification time
-    '--paths', `temp:${TEMP_DIR}`,    // ensure temp files go to our temp dir
+    '--extractor-args', 'pornhub:api=0',  // Force non-PhantomJS extraction
+    '--js-runtimes', 'node',              // Use Node.js for site challenges
+    '--no-part',
+    '--no-mtime',
+    '--paths', `temp:${TEMP_DIR}`,
   ];
 
   if (url) {
     args.push('--referer', url);
   }
 
-  // Proxy support — either explicit env var or fallback
   const proxy = opts.useProxy ? (PROXY || 'auto') : PROXY;
   if (proxy) {
     args.push('--proxy', proxy);
   }
 
-  // Optional cookies file for sites that need login
   if (process.env.COOKIES_FILE) {
     args.push('--cookies', process.env.COOKIES_FILE);
   }
@@ -81,7 +83,22 @@ function getBaseArgs(url, opts = {}) {
  */
 function runYtdlp(args) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(YTDLP, args, { cwd: TEMP_DIR });
+    const env = { ...process.env };
+    // Ensure yt-dlp can find the node runtime for JS challenges
+    const nodeDir = path.dirname(process.execPath);
+    
+    // Windows path can be 'Path' or 'PATH', we need to find the right one
+    const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    const currentPath = env[pathKey] || '';
+    
+    if (!currentPath.includes(nodeDir)) {
+      env[pathKey] = `${nodeDir}${path.delimiter}${currentPath}`;
+    }
+
+    const proc = spawn(YTDLP, args, { 
+      cwd: TEMP_DIR,
+      env
+    });
 
     let stdout = '';
     let stderr = '';
@@ -111,12 +128,30 @@ function runYtdlp(args) {
  * @param {string} url
  * @returns {Promise<object>}
  */
-export async function getVideoInfo(url) {
+export async function getVideoInfo(url, opts = {}) {
   try {
-    return await attemptGetInfo(url, false);
+    // Try the native yt-dlp method first
+    return await attemptGetInfo(url, opts.useProxy);
   } catch (err) {
-    // If it's a connection error and we have a proxy configured, try with proxy
-    if (isConnectionError(err.message) && PROXY) {
+    // If native yt-dlp fails for PornHub, use the custom scraper as a fallback
+    if (url.includes('pornhub')) {
+      try {
+        console.log('[PornHub] Native yt-dlp failed, using custom fallback...');
+        return await customExtractor(url, 'age_verified=1; accessAgeDisclaimerPH=1; is_adult=1');
+      } catch (customErr) {
+        console.log('[PornHub] Custom fallback also failed:', customErr.message);
+      }
+    }
+    
+    // If it's not PornHub but still failed, try custom extractor as a last resort
+    if (!url.includes('pornhub')) {
+      try {
+        return await customExtractor(url);
+      } catch (customErr) {}
+    }
+
+    // Connection error retry logic
+    if (isConnectionError(err.message) && PROXY && !opts.useProxy) {
       console.log(`[yt-dlp] Connection failed, retrying via proxy for: ${url}`);
       try {
         return await attemptGetInfo(url, true);
@@ -155,11 +190,12 @@ async function attemptGetInfo(url, useProxy) {
       errorMsg.includes('unable to extract') || 
       errorMsg.includes('unsupported url') ||
       errorMsg.includes('unable to download webpage') ||
-      errorMsg.includes('unable to download api page')
+      errorMsg.includes('unable to download api page') ||
+      errorMsg.includes('phantomjs')
     ) {
       console.log('[yt-dlp] Native extraction failed, attempting custom fallback...');
       try {
-        const customResult = await customExtractor(url);
+        const customResult = await customExtractor(url, 'age_verified=1; accessAgeDisclaimerPH=1; is_adult=1');
         return customResult;
       } catch (customErr) {
         console.log('[yt-dlp] Custom extractor fallback failed:', customErr.message);
@@ -214,7 +250,6 @@ export function streamDownload(url, formatId, res, onHeaders, useProxy = false, 
       const ytArgs = [
         ...getBaseArgs(url, { useProxy }),
         '-f', targetFormat,
-        '--js-runtimes', 'node',
         '--no-part',
         '-o', tempFile,
         '--ffmpeg-location', FFMPEG_PATH,
@@ -480,19 +515,41 @@ function deduplicateFormats(formats) {
  */
 function customExtractor(url, prevCookies = '') {
   return new Promise((resolve, reject) => {
-    // Determine which custom logic to use based on URL
-    const isPimpBunny = url.includes('pimpbunny.com');
-    const isXHamster = url.includes('xhamster.com');
-    
-    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    // Embed Strategy for PornHub: Embed pages are much easier to scrape
+    let fetchUrl = url;
+    const pornhubMatch = url.match(/viewkey=([a-zA-Z0-9]+)/);
+    if (pornhubMatch) {
+      fetchUrl = `https://www.pornhub.com/embed/${pornhubMatch[1]}`;
+    } else if (url.includes('pornhub')) {
+      fetchUrl = url.replace('www.', 'm.').replace('pornhub.org', 'pornhub.com');
+    }
+
+    const isPornHub = url.includes('pornhub');
+    const isXHamster = url.includes('xhamster');
+    const isPimpBunny = url.includes('pimpbunny');
+
+    const userAgent = url.includes('pornhub') 
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
     const headers = {
       'User-Agent': userAgent,
+      'Referer': 'https://www.google.com/',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
       'Accept-Language': 'en-US,en;q=0.9',
+      'Cache-Control': 'max-age=0',
+      'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-user': '?1',
+      'upgrade-insecure-requests': '1',
       'Cookie': prevCookies
     };
     
-    https.get(url, { headers }, (res) => {
+    https.get(fetchUrl, { headers }, (res) => {
       const newCookies = res.headers['set-cookie'] ? res.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') : '';
       const combinedCookies = [prevCookies, newCookies].filter(Boolean).join('; ');
       
@@ -557,6 +614,85 @@ function customExtractor(url, prevCookies = '') {
               });
             } catch (e) {}
           }
+        } else if (isPornHub) {
+          // 1. Search for mediaDefinitions, flashvars, or medias in the source
+          const jsonMatch = data.match(/mediaDefinitions\":\s*(\[[^\]]+\])/) || 
+                           data.match(/flashvars\s*=\s*({[^;]+})/) || 
+                           data.match(/medias\s*=\s*(\[[^\]]+\])/);
+          
+          if (jsonMatch) {
+            try {
+              const content = JSON.parse(jsonMatch[1].replace(/\\\//g, '/').replace(/\\'/g, "'"));
+              const list = Array.isArray(content) ? content : (content.mediaDefinitions || []);
+              list.forEach(def => {
+                const link = def.videoUrl || def.url;
+                if (link && typeof link === 'string' && link.startsWith('http')) {
+                  formats.push({
+                    format_id: `custom_direct_url|${link}|${cookies}`,
+                    ext: 'mp4', quality: def.quality || 'HD', resolution: def.quality || 'HD', type: 'video+audio'
+                  });
+                }
+              });
+            } catch(e) {}
+          }
+
+          // 2. Mobile-specific pattern: search for video_url or link_mp4 (Very reliable on m.pornhub.com)
+          const mobileMatch = data.match(/\"video_url\":\"([^\"]+)\"/) || data.match(/link_mp4\":\"([^\"]+)\"/);
+          if (mobileMatch) {
+            const link = mobileMatch[1].replace(/\\\//g, '/');
+            if (!formats.some(f => f.format_id.includes(link))) {
+              formats.push({
+                format_id: `custom_direct_url|${link}|${cookies}`,
+                ext: 'mp4', quality: 'Mobile SD', resolution: 'Mobile SD', type: 'video+audio'
+              });
+            }
+          }
+          // Fallback: search for direct MP4 links in flashvars or medias
+          if (formats.length === 0) {
+            const flashMatch = data.match(/flashvars_[0-9]*\s*=\s*({[^;]+})/) || data.match(/flashvars\s*=\s*({[^;]+})/) || data.match(/medias\s*=\s*(\[[^;]+\])/) || data.match(/\"medias\":\s*(\[[^;]+\])/);
+            if (flashMatch) {
+               try {
+                 const cleaned = flashMatch[1].replace(/\\\//g, '/').replace(/\\'/g, "'");
+                 const vars = JSON.parse(cleaned);
+                 const defs = vars.mediaDefinitions || (Array.isArray(vars) ? vars : []);
+                 defs.forEach(def => {
+                   const link = def.videoUrl || def.url;
+                   if (link) {
+                      const finalLink = link.startsWith('//') ? `https:${link}` : link;
+                      formats.push({
+                        format_id: `custom_direct_url|${finalLink}|${cookies}`,
+                        ext: 'mp4', quality: def.quality || 'HD', resolution: def.quality || 'HD',
+                        type: 'video+audio'
+                      });
+                   }
+                 });
+               } catch (e) {}
+            }
+          }
+          // Final Fallback: search for direct MP4 links anywhere in script tags
+          if (formats.length === 0) {
+            const mp4Matches = data.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/g) || [];
+            mp4Matches.forEach(link => {
+              if (link.includes('video') && !link.includes('preview')) {
+                const finalLink = link.replace(/\\\//g, '/');
+                formats.push({
+                  format_id: `custom_direct_url|${finalLink}|${cookies}`,
+                  ext: 'mp4', quality: 'HD', resolution: 'HD', type: 'video+audio'
+                });
+              }
+            });
+          }
+          // Mobile-specific pattern: search for video_url or link_mp4
+          if (formats.length === 0) {
+             const mobileMatch = data.match(/\"video_url\":\"([^\"]+)\"/) || data.match(/link_mp4\":\"([^\"]+)\"/);
+             if (mobileMatch) {
+               const link = mobileMatch[1].replace(/\\\//g, '/');
+               formats.push({
+                 format_id: `custom_direct_url|${link}|${cookies}`,
+                 ext: 'mp4', quality: 'Mobile SD', resolution: 'Mobile SD', type: 'video+audio'
+               });
+             }
+          }
         } else if (isPimpBunny) {
           const configPatterns = [
             { key: 'video_url', label: '360p' },
@@ -620,12 +756,19 @@ function customExtractor(url, prevCookies = '') {
           const qualityMap = { '4K': 2160, '2160p': 2160, '2K': 1440, '1440p': 1440, '1080p': 1080, '720p': 720, 'HD': 719, '480p': 480, '360p': 360, 'SD': 359 };
           formats.sort((a, b) => (qualityMap[b.resolution] || 0) - (qualityMap[a.resolution] || 0));
 
+          // Refine title for PornHub
+          let uploader = isXHamster ? 'xHamster' : 'Web';
+          if (isPornHub) {
+            uploader = 'PornHub';
+            title = title.replace(' - Pornhub.com', '').replace(' - Pornhub.org', '').trim();
+          }
+
           resolve({
             title,
             thumbnail: null,
             duration,
             duration_label: durationLabel,
-            uploader: isXHamster ? 'xHamster' : 'Web',
+            uploader: uploader,
             view_count: null,
             upload_date: null,
             webpage_url: url,
@@ -633,7 +776,7 @@ function customExtractor(url, prevCookies = '') {
             formats: formats
           });
         } else {
-          reject(new Error('Could not find any direct video links in page source. The site may be protected or the content removed.'));
+          reject(new Error('Could not find any direct video links in page source.'));
         }
       });
     }).on('error', reject);

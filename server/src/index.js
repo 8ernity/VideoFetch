@@ -49,6 +49,10 @@ app.use((err, _req, res, _next) => {
 });
 
 /* ── Start ── */
-app.listen(PORT, () => {
-  console.log(`\n  ⚡ VideoFetch server running on http://localhost:${PORT}\n`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`\n  ⚡ VideoFetch server running on http://localhost:${PORT}\n`);
+  });
+}
+
+export default app;
