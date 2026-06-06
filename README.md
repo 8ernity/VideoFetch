@@ -1,4 +1,7 @@
 # ⚡ VideoFetch
+<p align="center">
+  <img src="./client/public/VideoFetch.png" alt="WRAITH Banner" width="100%">
+</p>
 
 A modern, responsive web application for downloading publicly accessible videos from supported platforms. Built with **React + Vite** (frontend) and **Node.js + Express** (backend), powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 
