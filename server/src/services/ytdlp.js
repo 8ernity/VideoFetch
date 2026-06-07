@@ -5,6 +5,8 @@
  */
 
 import https from 'https';
+import http from 'http';
+import tls from 'tls';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -567,24 +569,160 @@ function deduplicateFormats(formats) {
 }
 
 /**
+ * Fetch HTML content from a URL, supporting optional HTTP proxy routing.
+ * Returns { html, headers, statusCode }.
+ */
+function fetchHtml(targetUrl, headers, proxyUrl = '') {
+  return new Promise((resolve, reject) => {
+    let parsedTarget;
+    try {
+      parsedTarget = new URL(targetUrl);
+    } catch (e) {
+      return reject(new Error(`Invalid target URL: ${targetUrl}`));
+    }
+
+    if (proxyUrl) {
+      let parsedProxy;
+      try {
+        parsedProxy = new URL(proxyUrl);
+      } catch (e) {
+        return reject(new Error(`Invalid proxy URL: ${proxyUrl}`));
+      }
+
+      const proxyPort = parsedProxy.port || (parsedProxy.protocol === 'https:' ? 443 : 80);
+      const targetPort = parsedTarget.port || (parsedTarget.protocol === 'https:' ? 443 : 80);
+
+      const options = {
+        host: parsedProxy.hostname,
+        port: proxyPort,
+        method: 'CONNECT',
+        path: `${parsedTarget.hostname}:${targetPort}`,
+        headers: {
+          Host: `${parsedTarget.hostname}:${targetPort}`,
+        }
+      };
+
+      if (parsedProxy.username || parsedProxy.password) {
+        const auth = Buffer.from(`${parsedProxy.username}:${parsedProxy.password}`).toString('base64');
+        options.headers['Proxy-Authorization'] = `Basic ${auth}`;
+      }
+
+      const req = http.request(options);
+      req.end();
+
+      req.on('connect', (res, socket) => {
+        if (res.statusCode !== 200) {
+          socket.destroy();
+          return reject(new Error(`Proxy CONNECT failed with status: ${res.statusCode}`));
+        }
+
+        const tlsSocket = tls.connect({
+          socket: socket,
+          servername: parsedTarget.hostname,
+          rejectUnauthorized: false
+        }, () => {
+          const pathAndSearch = (parsedTarget.pathname || '/') + (parsedTarget.search || '');
+          let headersStr = `GET ${pathAndSearch} HTTP/1.1\r\n`;
+          Object.entries(headers).forEach(([k, v]) => {
+            headersStr += `${k}: ${v}\r\n`;
+          });
+          headersStr += `Host: ${parsedTarget.hostname}\r\nConnection: close\r\n\r\n`;
+          tlsSocket.write(headersStr);
+        });
+
+        let data = Buffer.alloc(0);
+        tlsSocket.on('data', (chunk) => {
+          data = Buffer.concat([data, chunk]);
+        });
+
+        tlsSocket.on('end', () => {
+          const rawResponse = data.toString('utf8');
+          const headerEnd = rawResponse.indexOf('\r\n\r\n');
+          if (headerEnd === -1) {
+            return resolve({ html: rawResponse, headers: {}, statusCode: 200 });
+          }
+
+          const headerPart = rawResponse.substring(0, headerEnd);
+          const htmlPart = rawResponse.substring(headerEnd + 4);
+
+          const headerLines = headerPart.split('\r\n');
+          const statusLine = headerLines[0];
+          const statusMatch = statusLine.match(/HTTP\/1\.[01]\s+(\d+)/);
+          const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 200;
+
+          const responseHeaders = {};
+          headerLines.slice(1).forEach(line => {
+            const parts = line.split(':');
+            if (parts.length >= 2) {
+              const k = parts[0].trim().toLowerCase();
+              const v = parts.slice(1).join(':').trim();
+              if (k === 'set-cookie') {
+                if (!responseHeaders[k]) responseHeaders[k] = [];
+                responseHeaders[k].push(v);
+              } else {
+                responseHeaders[k] = v;
+              }
+            }
+          });
+
+          resolve({ html: htmlPart, headers: responseHeaders, statusCode });
+        });
+
+        tlsSocket.on('error', (err) => {
+          reject(err);
+        });
+      });
+
+      req.on('error', (err) => {
+        reject(err);
+      });
+    } else {
+      const requestOptions = {
+        headers,
+        rejectUnauthorized: false
+      };
+      
+      https.get(targetUrl, requestOptions, (res) => {
+        let html = '';
+        res.on('data', chunk => html += chunk);
+        res.on('end', () => {
+          resolve({
+            html,
+            headers: res.headers,
+            statusCode: res.statusCode
+          });
+        });
+      }).on('error', reject);
+    }
+  });
+}
+
+/**
  * Custom extractor for specific sites not supported by yt-dlp
  */
 function customExtractor(url, prevCookies = '') {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     // Embed Strategy for PornHub: Embed pages are much easier to scrape
     let fetchUrl = url;
-    const pornhubMatch = url.match(/viewkey=([a-zA-Z0-9]+)/);
-    if (pornhubMatch) {
-      fetchUrl = `https://www.pornhub.com/embed/${pornhubMatch[1]}`;
-    } else if (url.includes('pornhub')) {
-      fetchUrl = url.replace('www.', 'm.').replace('pornhub.org', 'pornhub.com');
-    }
-
     const isPornHub = url.includes('pornhub');
     const isXHamster = url.includes('xhamster');
     const isPimpBunny = url.includes('pimpbunny');
 
-    const userAgent = url.includes('pornhub') 
+    if (isPornHub) {
+      let hostname = 'www.pornhub.com';
+      try {
+        hostname = new URL(url).hostname;
+      } catch (e) {}
+      
+      const pornhubMatch = url.match(/viewkey=([a-zA-Z0-9]+)/);
+      if (pornhubMatch) {
+        fetchUrl = `https://${hostname}/embed/${pornhubMatch[1]}`;
+      } else {
+        fetchUrl = url.replace('www.', 'm.');
+      }
+    }
+
+    const userAgent = isPornHub 
       ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
       : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -605,13 +743,17 @@ function customExtractor(url, prevCookies = '') {
       'Cookie': prevCookies
     };
     
-    https.get(fetchUrl, { headers }, (res) => {
-      const newCookies = res.headers['set-cookie'] ? res.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') : '';
+    try {
+      const { html, headers: responseHeaders, statusCode } = await fetchHtml(fetchUrl, headers, PROXY);
+      
+      const newCookies = responseHeaders['set-cookie'] 
+        ? (Array.isArray(responseHeaders['set-cookie']) ? responseHeaders['set-cookie'] : [responseHeaders['set-cookie']]).map(c => c.split(';')[0]).join('; ')
+        : '';
       const combinedCookies = [prevCookies, newCookies].filter(Boolean).join('; ');
       
       // If we get a redirect, follow it and pass cookies
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        let redirectUrl = res.headers.location;
+      if (statusCode >= 300 && statusCode < 400 && responseHeaders.location) {
+        let redirectUrl = responseHeaders.location;
         if (!redirectUrl.startsWith('http')) {
           const origin = new URL(url).origin;
           redirectUrl = new URL(redirectUrl, origin).href;
@@ -620,12 +762,11 @@ function customExtractor(url, prevCookies = '') {
       }
 
       const cookies = combinedCookies;
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 400 && !data.includes('mp4')) {
-          return reject(new Error(`Site returned error ${res.statusCode}`));
-        }
+      const data = html;
+      
+      if (statusCode >= 400 && !data.includes('mp4')) {
+        return reject(new Error(`Site returned error ${statusCode}`));
+      }
 
         // Parse title
         let title = 'Custom Extracted Video';
@@ -834,8 +975,9 @@ function customExtractor(url, prevCookies = '') {
         } else {
           reject(new Error('Could not find any direct video links in page source.'));
         }
-      });
-    }).on('error', reject);
-  });
-}
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
 
