@@ -58,6 +58,7 @@ export default function App() {
         selectedFormat.format_id,
         videoInfo.title,
         selectedFormat.ext,
+        selectedFormat.type,
         trim ? trim.startTime : null,
         trim ? trim.endTime : null
       );

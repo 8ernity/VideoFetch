@@ -35,8 +35,8 @@ export async function fetchVideoInfo(url) {
  * Build the download URL for a given format.
  * Optionally includes trim start/end times (in seconds).
  */
-export function getDownloadUrl(url, formatId, title, ext, trimStart, trimEnd) {
-  const params = new URLSearchParams({ url, format_id: formatId, title: title || 'video', ext: ext || 'mp4' });
+export function getDownloadUrl(url, formatId, title, ext, type, trimStart, trimEnd) {
+  const params = new URLSearchParams({ url, format_id: formatId, title: title || 'video', ext: ext || 'mp4', type: type || 'video' });
   if (trimStart != null && trimEnd != null) {
     params.set('trim_start', String(Math.floor(trimStart)));
     params.set('trim_end', String(Math.floor(trimEnd)));

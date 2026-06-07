@@ -66,6 +66,7 @@ export function validateDownloadParams(req, res, next) {
 
   req.videoUrl = url.trim();
   req.formatId = format_id.trim();
+  req.videoType = typeof req.query.type === 'string' ? req.query.type.trim() : 'video+audio';
 
   // Optional trim parameters (seconds)
   const { trim_start, trim_end } = req.query;

@@ -216,22 +216,27 @@ async function attemptGetInfo(url, useProxy) {
  * Download a video format and stream it to the client.
  * Simple, direct pipe for maximum reliability.
  */
-export function streamDownload(url, formatId, res, onHeaders, useProxy = false, opts = null) {
+export function streamDownload(url, formatId, type, res, onHeaders, useProxy = false, opts = null) {
   return new Promise(async (resolve, reject) => {
+    const isAudioOnly = type === 'audio-only';
+    const ext = isAudioOnly ? 'mp3' : 'mp4';
+    
     const tempId = crypto.randomBytes(8).toString('hex');
-    const tempFile = path.join(TEMP_DIR, `vfetch_${tempId}.mp4`);
-    console.log(`[Process] Buffering to file: ${tempFile}`);
+    const tempFile = path.join(TEMP_DIR, `vfetch_${tempId}.${ext}`);
     
     let hasError = false;
     let ytError = '';
 
     // 1. Prepare download arguments
-    let isDirectUrl = formatId.startsWith('custom_direct_url|');
+    const isDirectUrl = formatId.startsWith('custom_direct_url|');
     let targetFormat = formatId;
     
-    if (!isDirectUrl && (url.includes('youtube.com') || url.includes('youtu.be')) && !targetFormat.includes('+')) {
+    if (!isDirectUrl && !isAudioOnly && (url.includes('youtube.com') || url.includes('youtu.be')) && !targetFormat.includes('+')) {
       targetFormat = `${targetFormat}+bestaudio[ext=m4a]/bestaudio/best`;
     }
+
+    // Determine if we can stream directly to stdout on-the-fly
+    const canStreamDirect = !isDirectUrl && (!opts || (opts.start == null && opts.end == null)) && (isAudioOnly || !targetFormat.includes('+'));
 
     let ytProc;
     if (isDirectUrl) {
@@ -244,17 +249,68 @@ export function streamDownload(url, formatId, res, onHeaders, useProxy = false, 
         '-movflags', '+faststart',
         '-y', tempFile
       ];
+      console.log(`[Process] Buffering to file: ${tempFile}`);
       console.log(`[Process] Downloading direct URL via FFmpeg: ${directUrl.substring(0, 50)}...`);
-      ytProc = spawn(FFMPEG_PATH, ffArgs, { cwd: TEMP_DIR });
+      ytProc = spawn(FFMPEG_PATH, ffArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
+    } else if (canStreamDirect) {
+      console.log(`[Process] Streaming directly on-the-fly for format: ${targetFormat}`);
+      // Notify headers immediately (chunked transfer encoding)
+      onHeaders();
+
+      const ytArgs = [
+        ...getBaseArgs(url, { useProxy }),
+        '-f', targetFormat,
+      ];
+
+      if (isAudioOnly) {
+        ytArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '5');
+      }
+
+      ytArgs.push('-o', '-', url);
+      ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR });
+
+      ytProc.stdout.pipe(res);
+
+      ytProc.stderr.on('data', (d) => {
+        ytError += d.toString();
+      });
+
+      ytProc.on('close', (code) => {
+        if (code !== 0) {
+          const errMsg = parseError(ytError);
+          console.error(`[yt-dlp] Direct streaming failed with code ${code}. Error: ${errMsg}`);
+          if (!res.headersSent) {
+            res.status(500).json({ error: errMsg });
+          }
+          return reject(new Error(errMsg));
+        }
+        resolve();
+      });
+
+      ytProc.on('error', (err) => {
+        console.error('[yt-dlp] Direct streaming process error:', err);
+        reject(err);
+      });
+
+      res.on('close', () => {
+        ytProc.kill('SIGTERM');
+      });
+      return;
     } else {
+      console.log(`[Process] Buffering to file: ${tempFile}`);
       const ytArgs = [
         ...getBaseArgs(url, { useProxy }),
         '-f', targetFormat,
         '--no-part',
         '-o', tempFile,
-        '--ffmpeg-location', FFMPEG_PATH,
-        '--recode-video', 'mp4'
+        '--ffmpeg-location', FFMPEG_PATH
       ];
+
+      if (isAudioOnly) {
+        ytArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '5');
+      } else {
+        ytArgs.push('--remux-video', 'mp4');
+      }
 
       if (opts && opts.start != null && opts.end != null) {
         const start = formatSeconds(opts.start);
@@ -264,7 +320,7 @@ export function streamDownload(url, formatId, res, onHeaders, useProxy = false, 
       }
       
       ytArgs.push(url);
-      ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR });
+      ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
     }
 
     ytProc.stderr.on('data', (d) => {
@@ -450,15 +506,15 @@ function formatInfo(raw) {
   const formats = (raw.formats || [])
     .filter((f) => f.url && (f.vcodec !== 'none' || f.acodec !== 'none'))
     .map((f) => {
-      const isVideoOnly = f.vcodec !== 'none' && f.acodec === 'none';
+      const isAudioOnly = f.vcodec === 'none' && f.acodec !== 'none';
       return {
         format_id: f.format_id,
         url: f.url,
         manifest_url: f.manifest_url,
         http_headers: f.http_headers,
         cookies: f.cookies,
-        // Since our backend always remuxes into a streamable MP4, we report mp4 extension
-        ext: 'mp4',
+        // Set 'mp3' extension for audio-only downloads; keep 'mp4' for videos
+        ext: isAudioOnly ? 'mp3' : 'mp4',
         quality: f.format_note || f.quality || 'Unknown',
         resolution: f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : null),
         fps: f.fps || null,

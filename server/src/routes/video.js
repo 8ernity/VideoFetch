@@ -50,7 +50,7 @@ router.get('/download', validateDownloadParams, async (req, res) => {
     };
 
     try {
-      await streamDownload(req.videoUrl, req.formatId, res, setDownloadHeaders, false, trimOpts);
+      await streamDownload(req.videoUrl, req.formatId, req.videoType, res, setDownloadHeaders, false, trimOpts);
     } catch (err) {
       // If the link is expired (403/404), try to refresh it once automatically
       if (err.statusCode === 403 || err.statusCode === 404) {
@@ -71,7 +71,7 @@ router.get('/download', validateDownloadParams, async (req, res) => {
 
           if (newFormat) {
             console.log(`[Download] Found fresh link, restarting stream...`);
-            return await streamDownload(req.videoUrl, newFormat.format_id, res, setDownloadHeaders, false, trimOpts);
+            return await streamDownload(req.videoUrl, newFormat.format_id, req.videoType, res, setDownloadHeaders, false, trimOpts);
           }
         } catch (refreshErr) {
           console.error('[Download] Automatic refresh failed:', refreshErr.message);
