@@ -1191,6 +1191,8 @@ export function customExtractor(url, prevCookies = '') {
               }
               // Append resolution label from height if quality is numeric
               const resLabel = def.height ? `${def.height}p` : String(quality);
+              // Avoid duplicate URLs or resolutions
+              if (formats.some(f => f.format_id.includes(link) || f.resolution === resLabel)) return;
               formats.push({
                 format_id: `custom_direct_url|${link}|${cookies}`,
                 ext: 'mp4', quality: resLabel, resolution: resLabel, type: 'video+audio'
@@ -1303,35 +1305,37 @@ export function customExtractor(url, prevCookies = '') {
         }
 
         // 2. Fallback Generic Scraping (LOWER PRIORITY)
-        const mp4Matches = data.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/g) || [];
-        const uniqueMp4s = [...new Set(mp4Matches.map(m => {
-          let link = m.replace(/\\\//g, '/').replace(/\\/g, '');
-          if (isPimpBunny) link = link.replace('function/0/', '');
-          return link;
-        }))]
-          .filter(link => !link.includes('_preview.mp4') && !link.toLowerCase().endsWith('.jpg'));
+        if (formats.length === 0) {
+          const mp4Matches = data.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/g) || [];
+          const uniqueMp4s = [...new Set(mp4Matches.map(m => {
+            let link = m.replace(/\\\//g, '/').replace(/\\/g, '');
+            if (isPimpBunny) link = link.replace('function/0/', '');
+            return link;
+          }))]
+            .filter(link => !link.includes('_preview.mp4') && !link.toLowerCase().endsWith('.jpg'));
 
-        uniqueMp4s.forEach(link => {
-          // Only add if this link is not already present in formats
-          if (!formats.some(f => f.format_id.includes(link))) {
-            let resLabel = 'HD';
-            if (link.includes('_2160p') || link.includes('2160p')) resLabel = '4K';
-            else if (link.includes('_1440p') || link.includes('1440p')) resLabel = '2K';
-            else if (link.includes('_1080p') || link.includes('1080p')) resLabel = '1080p';
-            else if (link.includes('_720p') || link.includes('720p')) resLabel = '720p';
-            else if (link.includes('_480p') || link.includes('480p')) resLabel = '480p';
-            else if (link.includes('_360p') || link.includes('360p')) resLabel = '360p';
+          uniqueMp4s.forEach(link => {
+            // Only add if this link is not already present in formats
+            if (!formats.some(f => f.format_id.includes(link))) {
+              let resLabel = 'HD';
+              if (link.includes('_2160p') || link.includes('2160p')) resLabel = '4K';
+              else if (link.includes('_1440p') || link.includes('1440p')) resLabel = '2K';
+              else if (link.includes('_1080p') || link.includes('1080p')) resLabel = '1080p';
+              else if (link.includes('_720p') || link.includes('720p')) resLabel = '720p';
+              else if (link.includes('_480p') || link.includes('480p')) resLabel = '480p';
+              else if (link.includes('_360p') || link.includes('360p')) resLabel = '360p';
 
-            formats.push({
-              format_id: `custom_direct_url|${link}|${cookies}`,
-              ext: 'mp4',
-              quality: resLabel,
-              resolution: resLabel,
-              filesize_label: 'Unknown',
-              type: 'video+audio'
-            });
-          }
-        });
+              formats.push({
+                format_id: `custom_direct_url|${link}|${cookies}`,
+                ext: 'mp4',
+                quality: resLabel,
+                resolution: resLabel,
+                filesize_label: 'Unknown',
+                type: 'video+audio'
+              });
+            }
+          });
+        }
 
         if (formats.length > 0) {
           const qualityMap = { '4K': 2160, '2160p': 2160, '2K': 1440, '1440p': 1440, '1080p': 1080, '720p': 720, 'HD': 719, '480p': 480, '360p': 360, 'SD': 359 };
