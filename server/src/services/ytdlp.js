@@ -7,6 +7,7 @@
 import https from 'https';
 import http from 'http';
 import tls from 'tls';
+import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -215,6 +216,59 @@ async function attemptGetInfo(url, useProxy) {
 }
 
 /**
+ * Stream data from a given HTTPS URL directly into the client response,
+ * bypassing DNS/SNI blocks for targeted domains and supporting redirections.
+ */
+function streamHttpsUrl(targetUrl, headers, res, onHeaders, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) {
+      return reject(new Error('Too many redirects'));
+    }
+
+    const requestOptions = {
+      headers,
+      rejectUnauthorized: false
+    };
+
+    if (isBypassTarget(targetUrl)) {
+      requestOptions.servername = '';
+      requestOptions.lookup = secureDnsLookup;
+    }
+
+    https.get(targetUrl, requestOptions, (dlRes) => {
+      if (dlRes.statusCode >= 300 && dlRes.statusCode < 400 && dlRes.headers.location) {
+        let redirectUrl = dlRes.headers.location;
+        if (!redirectUrl.startsWith('http')) {
+          redirectUrl = new URL(redirectUrl, new URL(targetUrl).origin).href;
+        }
+        console.log(`[Redirect] Following download redirect to: ${redirectUrl}`);
+        return streamHttpsUrl(redirectUrl, headers, res, onHeaders, redirectCount + 1).then(resolve).catch(reject);
+      }
+
+      if (dlRes.statusCode >= 400) {
+        return reject(new Error(`Server returned status ${dlRes.statusCode}`));
+      }
+
+      if (dlRes.headers['content-length']) {
+        res.setHeader('Content-Length', dlRes.headers['content-length']);
+      }
+      if (dlRes.headers['content-type']) {
+        res.setHeader('Content-Type', dlRes.headers['content-type']);
+      }
+      
+      onHeaders();
+      dlRes.pipe(res);
+
+      dlRes.on('end', () => resolve());
+      dlRes.on('error', reject);
+      res.on('close', () => {
+        dlRes.destroy();
+      });
+    }).on('error', reject);
+  });
+}
+
+/**
  * Download a video format and stream it to the client.
  * Simple, direct pipe for maximum reliability.
  */
@@ -243,17 +297,106 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
     let ytProc;
     if (isDirectUrl) {
       const [_, directUrl, cookies] = formatId.split('|');
-      const ffArgs = [
-        '-headers', `Cookie: ${cookies}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\r\nReferer: ${url}`,
-        '-i', directUrl,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
-        '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart',
-        '-y', tempFile
-      ];
-      console.log(`[Process] Buffering to file: ${tempFile}`);
-      console.log(`[Process] Downloading direct URL via FFmpeg: ${directUrl.substring(0, 50)}...`);
-      ytProc = spawn(FFMPEG_PATH, ffArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
+      const headers = {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Referer': url
+      };
+
+      if (!opts || (opts.start == null && opts.end == null)) {
+        console.log(`[Process] Streaming direct URL on-the-fly: ${directUrl.substring(0, 60)}...`);
+        try {
+          await streamHttpsUrl(directUrl, headers, res, onHeaders);
+          return resolve();
+        } catch (err) {
+          console.error('[Process] Direct stream failed:', err.message);
+          return reject(err);
+        }
+      } else {
+        // Efficient partial download: spin up a local reverse proxy so FFmpeg can
+        // use HTTP Range requests to download ONLY the bytes it needs for the trim.
+        console.log(`[Process] Partial download via proxy+FFmpeg for trim: ${formatSeconds(opts.start)} → ${formatSeconds(opts.end)}`);
+        
+        let proxyServer = null;
+        let resolvedCdnUrl = directUrl; // Will be updated after following redirects
+        
+        try {
+          // Step 1: Follow redirects to get the final CDN URL (redirects can't be followed per-range)
+          resolvedCdnUrl = await resolveRedirects(directUrl, headers);
+          console.log(`[Process] Resolved CDN URL: ${resolvedCdnUrl.substring(0, 80)}...`);
+          
+          // Step 2: Start a local reverse proxy that forwards Range requests through SNI bypass
+          proxyServer = await createRangeProxy(resolvedCdnUrl, headers);
+          const proxyUrl = `http://127.0.0.1:${proxyServer.address().port}/video.mp4`;
+          console.log(`[Process] Range proxy listening at: ${proxyUrl}`);
+          
+          // Step 3: Use FFmpeg with the proxy URL — it will send Range requests to seek efficiently
+          const trimmedTempFile = path.join(TEMP_DIR, `vfetch_trimmed_${tempId}.${ext}`);
+          const start = formatSeconds(opts.start);
+          const end = formatSeconds(opts.end);
+          const ffArgs = [
+            '-ss', start,
+            '-i', proxyUrl,
+            '-to', formatSeconds(opts.end - opts.start), // duration relative to seek point
+            '-c', 'copy',
+            '-movflags', '+faststart',
+            '-y', trimmedTempFile
+          ];
+          
+          console.log(`[Process] FFmpeg trimming via Range proxy...`);
+          
+          await new Promise((resolveFF, rejectFF) => {
+            const ffProc = spawn(FFMPEG_PATH, ffArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
+            let ffError = '';
+            ffProc.stderr.on('data', (d) => { ffError += d.toString(); });
+            
+            ffProc.on('close', (code) => {
+              if (code !== 0) {
+                rejectFF(new Error(`FFmpeg trim failed (code ${code}): ${ffError.substring(0, 300)}`));
+              } else {
+                resolveFF();
+              }
+            });
+            ffProc.on('error', rejectFF);
+          });
+          
+          // Step 4: Stream the trimmed file to the client
+          proxyServer.close();
+          proxyServer = null;
+          
+          if (!fs.existsSync(trimmedTempFile)) {
+            return reject(new Error('FFmpeg completed but output file is missing.'));
+          }
+          
+          const stats = fs.statSync(trimmedTempFile);
+          res.setHeader('Content-Length', stats.size);
+          onHeaders();
+          
+          const fileStream = fs.createReadStream(trimmedTempFile);
+          fileStream.pipe(res);
+          
+          const cleanup = () => {
+            fileStream.unpipe(res);
+            fileStream.destroy();
+            setTimeout(() => {
+              if (fs.existsSync(trimmedTempFile)) {
+                try { fs.unlinkSync(trimmedTempFile); } catch (e) {}
+              }
+            }, 100);
+          };
+          
+          fileStream.on('end', () => { cleanup(); resolve(); });
+          fileStream.on('error', (err) => { cleanup(); reject(err); });
+          res.on('close', cleanup);
+          
+        } catch (err) {
+          if (proxyServer) { try { proxyServer.close(); } catch (e) {} }
+          if (fs.existsSync(tempFile)) { try { fs.unlinkSync(tempFile); } catch (e) {} }
+          console.error('[Process] Proxy-based trim failed:', err.message);
+          return reject(err);
+        }
+      }
+      return;
     } else if (canStreamDirect) {
       console.log(`[Process] Streaming directly on-the-fly for format: ${targetFormat}`);
       // Notify headers immediately (chunked transfer encoding)
@@ -435,6 +578,94 @@ function validateDirectLink(directUrl, referer, cookies) {
 /* ───────── helpers ───────── */
 
 /**
+ * Follow HTTPS redirects (3xx) to resolve the final CDN URL.
+ * Uses SNI bypass for targeted domains.
+ */
+function resolveRedirects(targetUrl, headers, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 8) return reject(new Error('Too many redirects'));
+
+    const requestOptions = { headers, method: 'HEAD', rejectUnauthorized: false };
+    if (isBypassTarget(targetUrl)) {
+      requestOptions.servername = '';
+      requestOptions.lookup = secureDnsLookup;
+    }
+
+    const req = https.request(targetUrl, requestOptions, (res) => {
+      req.destroy();
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        let redirectUrl = res.headers.location;
+        if (!redirectUrl.startsWith('http')) {
+          redirectUrl = new URL(redirectUrl, new URL(targetUrl).origin).href;
+        }
+        return resolveRedirects(redirectUrl, headers, redirectCount + 1).then(resolve).catch(reject);
+      }
+      resolve(targetUrl);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Redirect resolve timed out')); });
+    req.setTimeout(10000);
+    req.end();
+  });
+}
+
+/**
+ * Create a temporary local HTTP server that acts as a reverse proxy to a CDN URL,
+ * transparently forwarding HTTP Range headers through our SNI-bypass layer.
+ * This allows FFmpeg to perform efficient HTTP seeking (partial downloads).
+ * @returns {Promise<http.Server>}
+ */
+function createRangeProxy(cdnUrl, cdnHeaders) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const proxyHeaders = { ...cdnHeaders };
+
+      // Forward Range header from FFmpeg
+      if (req.headers.range) {
+        proxyHeaders['Range'] = req.headers.range;
+      }
+
+      const requestOptions = {
+        headers: proxyHeaders,
+        rejectUnauthorized: false
+      };
+      if (isBypassTarget(cdnUrl)) {
+        requestOptions.servername = '';
+        requestOptions.lookup = secureDnsLookup;
+      }
+
+      https.get(cdnUrl, requestOptions, (cdnRes) => {
+        // Forward status code and relevant headers back to FFmpeg
+        const fwdHeaders = {};
+        if (cdnRes.headers['content-length']) fwdHeaders['Content-Length'] = cdnRes.headers['content-length'];
+        if (cdnRes.headers['content-type']) fwdHeaders['Content-Type'] = cdnRes.headers['content-type'];
+        if (cdnRes.headers['content-range']) fwdHeaders['Content-Range'] = cdnRes.headers['content-range'];
+        if (cdnRes.headers['accept-ranges']) fwdHeaders['Accept-Ranges'] = cdnRes.headers['accept-ranges'];
+
+        res.writeHead(cdnRes.statusCode, fwdHeaders);
+        cdnRes.pipe(res);
+
+        cdnRes.on('error', () => { res.end(); });
+        res.on('close', () => { cdnRes.destroy(); });
+      }).on('error', (err) => {
+        console.error('[Range Proxy] CDN request error:', err.message);
+        if (!res.headersSent) {
+          res.writeHead(502);
+        }
+        res.end();
+      });
+    });
+
+    server.listen(0, '127.0.0.1', () => {
+      console.log(`[Range Proxy] Started on port ${server.address().port}`);
+      resolve(server);
+    });
+
+    server.on('error', reject);
+  });
+}
+
+/**
  * Convert seconds to HH:MM:SS for yt-dlp --download-sections syntax.
  */
 function formatSeconds(totalSeconds) {
@@ -569,6 +800,36 @@ function deduplicateFormats(formats) {
 }
 
 /**
+ * Check if the URL hostname points to a Pornhub or phncdn domain.
+ */
+function isBypassTarget(urlStr) {
+  try {
+    const host = new URL(urlStr).hostname.toLowerCase();
+    return host.includes('pornhub') || host.includes('phncdn');
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Custom DNS lookup resolver using Cloudflare and Google DNS to bypass ISP DNS hijacking.
+ */
+function secureDnsLookup(hostname, opts, callback) {
+  const resolver = new dns.Resolver();
+  resolver.setServers(['1.1.1.1', '8.8.8.8']);
+  resolver.resolve4(hostname, (err, addresses) => {
+    if (err || addresses.length === 0) {
+      return dns.lookup(hostname, opts, callback);
+    }
+    if (opts.all) {
+      callback(null, [{ address: addresses[0], family: 4 }]);
+    } else {
+      callback(null, addresses[0], 4);
+    }
+  });
+}
+
+/**
  * Fetch HTML content from a URL, supporting optional HTTP proxy routing.
  * Returns { html, headers, statusCode }.
  */
@@ -681,6 +942,11 @@ function fetchHtml(targetUrl, headers, proxyUrl = '') {
         headers,
         rejectUnauthorized: false
       };
+
+      if (isBypassTarget(targetUrl)) {
+        requestOptions.servername = '';
+        requestOptions.lookup = secureDnsLookup;
+      }
       
       https.get(targetUrl, requestOptions, (res) => {
         let html = '';
@@ -700,7 +966,7 @@ function fetchHtml(targetUrl, headers, proxyUrl = '') {
 /**
  * Custom extractor for specific sites not supported by yt-dlp
  */
-function customExtractor(url, prevCookies = '') {
+export function customExtractor(url, prevCookies = '') {
   return new Promise(async (resolve, reject) => {
     // Embed Strategy for PornHub: Embed pages are much easier to scrape
     let fetchUrl = url;
@@ -745,6 +1011,7 @@ function customExtractor(url, prevCookies = '') {
     
     try {
       const { html, headers: responseHeaders, statusCode } = await fetchHtml(fetchUrl, headers, PROXY);
+      console.log(`[Pornhub Scraper] Fetch URL: ${fetchUrl}, Status: ${statusCode}, HTML length: ${html.length}`);
       
       const newCookies = responseHeaders['set-cookie'] 
         ? (Array.isArray(responseHeaders['set-cookie']) ? responseHeaders['set-cookie'] : [responseHeaders['set-cookie']]).map(c => c.split(';')[0]).join('; ')
@@ -768,26 +1035,38 @@ function customExtractor(url, prevCookies = '') {
         return reject(new Error(`Site returned error ${statusCode}`));
       }
 
-        // Parse title
+        // Parse title — try multiple sources (flashvars, og:title, then <title>)
         let title = 'Custom Extracted Video';
-        const titleMatch = data.match(/<title>([^<]+)<\/title>/i);
-        if (titleMatch) title = titleMatch[1].replace(' - xHamster', '').trim();
+        const ogTitleMatch = data.match(/property="og:title"\s+content="([^"]+)"/i) ||
+                             data.match(/content="([^"]+)"\s+property="og:title"/i);
+        const titleTagMatch = data.match(/<title>([^<]+)<\/title>/i);
+        const flashvarsTitleMatch = data.match(/"video_title"\s*:\s*"([^"]+)"/);
+        
+        if (flashvarsTitleMatch) {
+          title = flashvarsTitleMatch[1];
+        } else if (ogTitleMatch) {
+          title = ogTitleMatch[1];
+        } else if (titleTagMatch && !titleTagMatch[1].includes('Embed Player')) {
+          title = titleTagMatch[1];
+        }
+        title = title.replace(' - xHamster', '').replace(' - Pornhub.com', '').replace(' - Pornhub.org', '').trim();
 
-        // Parse duration
+        // Parse duration — try multiple patterns, each with different capture semantics
         let duration = null;
         let durationLabel = 'Unknown';
-        const durMatch = data.match(/duration\":\s*\"PT(\d+H)?(\d+M)?(\d+S)?\"/i) || data.match(/\"duration\":\s*(\d+)/);
-        if (durMatch) {
-          if (durMatch[1] || durMatch[2] || durMatch[3]) {
-            const h = parseInt(durMatch[1]) || 0;
-            const m = parseInt(durMatch[2]) || 0;
-            const s = parseInt(durMatch[3]) || 0;
-            duration = h * 3600 + m * 60 + s;
-          } else {
-            duration = parseInt(durMatch[1]);
-          }
-          durationLabel = formatDuration(duration);
+        const durPT = data.match(/duration\":\s*\"PT(\d+H)?(\d+M)?(\d+S)?\"/i);
+        const durInt = data.match(/\"duration\":\s*(\d+)/) || data.match(/\"video_duration\"\s*:\s*"?(\d+)"?/);
+        if (durPT && (durPT[1] || durPT[2] || durPT[3])) {
+          const h = parseInt(durPT[1]) || 0;
+          const m = parseInt(durPT[2]) || 0;
+          const s = parseInt(durPT[3]) || 0;
+          duration = h * 3600 + m * 60 + s;
+        } else if (durInt) {
+          duration = parseInt(durInt[1]);
         }
+        if (duration) {
+          durationLabel = formatDuration(duration);
+        };
 
         const formats = [];
 
@@ -812,28 +1091,138 @@ function customExtractor(url, prevCookies = '') {
             } catch (e) {}
           }
         } else if (isPornHub) {
-          // 1. Search for mediaDefinitions, flashvars, or medias in the source
-          const jsonMatch = data.match(/mediaDefinitions\":\s*(\[[^\]]+\])/) || 
-                           data.match(/flashvars\s*=\s*({[^;]+})/) || 
-                           data.match(/medias\s*=\s*(\[[^\]]+\])/);
-          
-          if (jsonMatch) {
-            try {
-              const content = JSON.parse(jsonMatch[1].replace(/\\\//g, '/').replace(/\\'/g, "'"));
-              const list = Array.isArray(content) ? content : (content.mediaDefinitions || []);
-              list.forEach(def => {
-                const link = def.videoUrl || def.url;
-                if (link && typeof link === 'string' && link.startsWith('http')) {
-                  formats.push({
-                    format_id: `custom_direct_url|${link}|${cookies}`,
-                    ext: 'mp4', quality: def.quality || 'HD', resolution: def.quality || 'HD', type: 'video+audio'
-                  });
+          // Robust bracket-counting JSON extractor — immune to nested brackets/braces
+          function extractJsonValue(html, marker) {
+            const idx = html.indexOf(marker);
+            if (idx === -1) return null;
+            // Find the opening bracket/brace after the marker
+            let start = idx + marker.length;
+            while (start < html.length && html[start] !== '{' && html[start] !== '[') start++;
+            if (start >= html.length) return null;
+
+            const open = html[start];
+            const close = open === '{' ? '}' : ']';
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+            for (let i = start; i < html.length; i++) {
+              const ch = html[i];
+              if (escape) { escape = false; continue; }
+              if (ch === '\\') { escape = true; continue; }
+              if (ch === '"') { inString = !inString; continue; }
+              if (inString) continue;
+              if (ch === open) depth++;
+              else if (ch === close) {
+                depth--;
+                if (depth === 0) {
+                  return html.substring(start, i + 1);
                 }
-              });
-            } catch(e) {}
+              }
+            }
+            return null;
           }
 
-          // 2. Mobile-specific pattern: search for video_url or link_mp4 (Very reliable on m.pornhub.com)
+          // Helper: fetch JSON from a URL using SNI bypass
+          async function fetchJsonUrl(jsonUrl) {
+            return new Promise((resolveJson, rejectJson) => {
+              const reqOpts = {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+                  'Referer': url,
+                  'Cookie': cookies
+                },
+                rejectUnauthorized: false
+              };
+              if (isBypassTarget(jsonUrl)) {
+                reqOpts.servername = '';
+                reqOpts.lookup = secureDnsLookup;
+              }
+              https.get(jsonUrl, reqOpts, (jsonRes) => {
+                let body = '';
+                jsonRes.on('data', chunk => body += chunk);
+                jsonRes.on('end', () => {
+                  try {
+                    resolveJson(JSON.parse(body));
+                  } catch (e) {
+                    rejectJson(new Error(`JSON parse failed for get_media: ${e.message}`));
+                  }
+                });
+              }).on('error', rejectJson);
+            });
+          }
+
+          // Helper: process a list of mediaDefinitions into formats
+          function addDirectFormats(defs) {
+            defs.forEach(def => {
+              const link = def.videoUrl || def.url;
+              if (!link || typeof link !== 'string' || !link.startsWith('http')) return;
+              // Skip HLS streams — we use direct MP4
+              if (def.format === 'hls' || link.includes('.m3u8')) return;
+              let quality = def.quality || 'HD';
+              if (Array.isArray(quality)) {
+                quality = quality.length > 0 ? String(quality[0]) : 'Direct MP4';
+              }
+              // Append resolution label from height if quality is numeric
+              const resLabel = def.height ? `${def.height}p` : String(quality);
+              formats.push({
+                format_id: `custom_direct_url|${link}|${cookies}`,
+                ext: 'mp4', quality: resLabel, resolution: resLabel, type: 'video+audio'
+              });
+            });
+          }
+
+          // 1. Try flashvars object (contains mediaDefinitions inside)
+          const flashvarsJson = extractJsonValue(data, 'flashvars') ||
+                                extractJsonValue(data, 'flashvars_');
+          let allDefs = [];
+          if (flashvarsJson) {
+            try {
+              const vars = JSON.parse(flashvarsJson.replace(/\\\//g, '/'));
+              allDefs = vars.mediaDefinitions || [];
+            } catch (e) {
+              console.log('[Pornhub Scraper] flashvars JSON parse failed:', e.message);
+            }
+          }
+
+          // 2. Fallback: Try mediaDefinitions array directly
+          if (allDefs.length === 0) {
+            const mediaDefsJson = extractJsonValue(data, '"mediaDefinitions"');
+            if (mediaDefsJson) {
+              try {
+                allDefs = JSON.parse(mediaDefsJson.replace(/\\\//g, '/'));
+              } catch (e) {
+                console.log('[Pornhub Scraper] mediaDefinitions JSON parse failed:', e.message);
+              }
+            }
+          }
+
+          if (allDefs.length > 0) {
+            // Separate remote (get_media redirect) entries from direct entries
+            const remoteDefs = allDefs.filter(d => d.remote === true);
+            const directDefs = allDefs.filter(d => !d.remote);
+
+            // Add any direct (non-remote, non-HLS) entries first
+            addDirectFormats(directDefs);
+
+            // Follow remote get_media URLs to resolve actual CDN links
+            for (const remoteDef of remoteDefs) {
+              const mediaUrl = remoteDef.videoUrl || remoteDef.url;
+              if (!mediaUrl || !mediaUrl.startsWith('http')) continue;
+              try {
+                console.log(`[Pornhub Scraper] Following get_media URL...`);
+                const resolvedDefs = await fetchJsonUrl(mediaUrl);
+                if (Array.isArray(resolvedDefs)) {
+                  addDirectFormats(resolvedDefs);
+                }
+              } catch (e) {
+                console.log('[Pornhub Scraper] get_media fetch failed:', e.message);
+              }
+            }
+
+            console.log(`[Pornhub Scraper] Total formats extracted: ${formats.length}`);
+          }
+
+          // 3. Mobile-specific pattern: video_url or link_mp4 (very reliable on m.pornhub.com)
           const mobileMatch = data.match(/\"video_url\":\"([^\"]+)\"/) || data.match(/link_mp4\":\"([^\"]+)\"/);
           if (mobileMatch) {
             const link = mobileMatch[1].replace(/\\\//g, '/');
@@ -844,29 +1233,8 @@ function customExtractor(url, prevCookies = '') {
               });
             }
           }
-          // Fallback: search for direct MP4 links in flashvars or medias
-          if (formats.length === 0) {
-            const flashMatch = data.match(/flashvars_[0-9]*\s*=\s*({[^;]+})/) || data.match(/flashvars\s*=\s*({[^;]+})/) || data.match(/medias\s*=\s*(\[[^;]+\])/) || data.match(/\"medias\":\s*(\[[^;]+\])/);
-            if (flashMatch) {
-               try {
-                 const cleaned = flashMatch[1].replace(/\\\//g, '/').replace(/\\'/g, "'");
-                 const vars = JSON.parse(cleaned);
-                 const defs = vars.mediaDefinitions || (Array.isArray(vars) ? vars : []);
-                 defs.forEach(def => {
-                   const link = def.videoUrl || def.url;
-                   if (link) {
-                      const finalLink = link.startsWith('//') ? `https:${link}` : link;
-                      formats.push({
-                        format_id: `custom_direct_url|${finalLink}|${cookies}`,
-                        ext: 'mp4', quality: def.quality || 'HD', resolution: def.quality || 'HD',
-                        type: 'video+audio'
-                      });
-                   }
-                 });
-               } catch (e) {}
-            }
-          }
-          // Final Fallback: search for direct MP4 links anywhere in script tags
+
+          // 4. Fallback: search for direct .mp4 URLs anywhere in script tags
           if (formats.length === 0) {
             const mp4Matches = data.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/g) || [];
             mp4Matches.forEach(link => {
@@ -878,17 +1246,6 @@ function customExtractor(url, prevCookies = '') {
                 });
               }
             });
-          }
-          // Mobile-specific pattern: search for video_url or link_mp4
-          if (formats.length === 0) {
-             const mobileMatch = data.match(/\"video_url\":\"([^\"]+)\"/) || data.match(/link_mp4\":\"([^\"]+)\"/);
-             if (mobileMatch) {
-               const link = mobileMatch[1].replace(/\\\//g, '/');
-               formats.push({
-                 format_id: `custom_direct_url|${link}|${cookies}`,
-                 ext: 'mp4', quality: 'Mobile SD', resolution: 'Mobile SD', type: 'video+audio'
-               });
-             }
           }
         } else if (isPimpBunny) {
           const configPatterns = [
