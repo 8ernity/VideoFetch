@@ -88,4 +88,54 @@ router.get('/download', validateDownloadParams, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/video/stream?url=...&format_id=...
+ * Proxies the video stream to the client for playback and previewing.
+ * Supports HTTP Range requests and forwards them to the CDN.
+ */
+router.get('/stream', validateDownloadParams, async (req, res) => {
+  try {
+    const setStreamHeaders = () => {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Accept-Ranges', 'bytes');
+    };
+
+    const rangeHeader = req.headers.range;
+    const streamOpts = rangeHeader ? { range: rangeHeader } : null;
+
+    try {
+      await streamDownload(req.videoUrl, req.formatId, req.videoType, res, setStreamHeaders, false, streamOpts);
+    } catch (err) {
+      if (err.statusCode === 403 || err.statusCode === 404) {
+        console.log(`[Stream] Link expired (status ${err.statusCode}), attempting refresh for: ${req.videoUrl}`);
+        try {
+          const freshInfo = await getVideoInfo(req.videoUrl);
+          const oldFormatId = req.formatId;
+          let newFormat = null;
+
+          if (oldFormatId.startsWith('custom_direct_url|')) {
+            newFormat = freshInfo.formats.find(f => f.format_id.startsWith('custom_direct_url|'));
+          } else {
+            newFormat = freshInfo.formats.find(f => f.format_id === oldFormatId) || freshInfo.formats[0];
+          }
+
+          if (newFormat) {
+            console.log(`[Stream] Found fresh link, restarting stream...`);
+            return await streamDownload(req.videoUrl, newFormat.format_id, req.videoType, res, setStreamHeaders, false, streamOpts);
+          }
+        } catch (refreshErr) {
+          console.error('[Stream] Automatic refresh failed:', refreshErr.message);
+        }
+      }
+      throw err;
+    }
+  } catch (err) {
+    console.error('[/api/video/stream]', err.message);
+    if (!res.headersSent) {
+      const status = err.statusCode || 500;
+      res.status(status).json({ error: err.message });
+    }
+  }
+});
+
 export default router;

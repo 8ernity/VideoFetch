@@ -249,11 +249,20 @@ function streamHttpsUrl(targetUrl, headers, res, onHeaders, redirectCount = 0) {
         return reject(new Error(`Server returned status ${dlRes.statusCode}`));
       }
 
+      // Forward response status code (e.g. 206 Partial Content or 200 OK)
+      res.statusCode = dlRes.statusCode;
+
       if (dlRes.headers['content-length']) {
         res.setHeader('Content-Length', dlRes.headers['content-length']);
       }
       if (dlRes.headers['content-type']) {
         res.setHeader('Content-Type', dlRes.headers['content-type']);
+      }
+      if (dlRes.headers['content-range']) {
+        res.setHeader('Content-Range', dlRes.headers['content-range']);
+      }
+      if (dlRes.headers['accept-ranges']) {
+        res.setHeader('Accept-Ranges', dlRes.headers['accept-ranges']);
       }
       
       onHeaders();
@@ -305,6 +314,9 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
 
       if (!opts || (opts.start == null && opts.end == null)) {
         console.log(`[Process] Streaming direct URL on-the-fly: ${directUrl.substring(0, 60)}...`);
+        if (opts && opts.range) {
+          headers['Range'] = opts.range;
+        }
         try {
           await streamHttpsUrl(directUrl, headers, res, onHeaders);
           return resolve();
@@ -982,15 +994,18 @@ export function customExtractor(url, prevCookies = '') {
       
       const pornhubMatch = url.match(/viewkey=([a-zA-Z0-9]+)/);
       if (pornhubMatch) {
-        fetchUrl = `https://${hostname}/embed/${pornhubMatch[1]}`;
+        fetchUrl = `https://${hostname}/view_video.php?viewkey=${pornhubMatch[1]}`;
       } else {
-        fetchUrl = url.replace('www.', 'm.');
+        fetchUrl = url;
       }
     }
 
-    const userAgent = isPornHub 
-      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
-      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+    let requestCookies = prevCookies;
+    if (isPornHub && !requestCookies.includes('platform=')) {
+      requestCookies = [requestCookies, 'age_verified=1; accessAgeDisclaimerPH=1; is_adult=1; platform=pc'].filter(Boolean).join('; ');
+    }
 
     const headers = {
       'User-Agent': userAgent,
@@ -1006,7 +1021,7 @@ export function customExtractor(url, prevCookies = '') {
       'sec-fetch-site': 'cross-site',
       'sec-fetch-user': '?1',
       'upgrade-insecure-requests': '1',
-      'Cookie': prevCookies
+      'Cookie': requestCookies
     };
     
     try {
@@ -1066,7 +1081,19 @@ export function customExtractor(url, prevCookies = '') {
         }
         if (duration) {
           durationLabel = formatDuration(duration);
-        };
+        }
+
+        // Parse thumbnail
+        let thumbnail = null;
+        const ogImageMatch = data.match(/property="og:image"\s+content="([^"]+)"/i) ||
+                             data.match(/content="([^"]+)"\s+property="og:image"/i);
+        const flashvarsImageMatch = data.match(/"image_url"\s*:\s*"([^"]+)"/);
+        
+        if (flashvarsImageMatch) {
+          thumbnail = flashvarsImageMatch[1].replace(/\\/g, '');
+        } else if (ogImageMatch) {
+          thumbnail = ogImageMatch[1];
+        }
 
         const formats = [];
 
@@ -1319,7 +1346,7 @@ export function customExtractor(url, prevCookies = '') {
 
           resolve({
             title,
-            thumbnail: null,
+            thumbnail,
             duration,
             duration_label: durationLabel,
             uploader: uploader,

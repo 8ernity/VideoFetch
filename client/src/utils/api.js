@@ -45,6 +45,14 @@ export function getDownloadUrl(url, formatId, title, ext, type, trimStart, trimE
 }
 
 /**
+ * Build the streaming proxy URL for inline preview.
+ */
+export function getStreamUrl(url, formatId, type) {
+  const params = new URLSearchParams({ url, format_id: formatId, type: type || 'video' });
+  return `${BASE}/stream?${params.toString()}`;
+}
+
+/**
  * Download a video with progress tracking via fetch + ReadableStream.
  * @param {string} downloadUrl
  * @param {function} onProgress — called with { loaded, total, percent }

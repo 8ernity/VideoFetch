@@ -286,6 +286,52 @@
   overflow: hidden;
 }
 
+.video-preview__player {
+  width: 100%;
+  aspect-ratio: 16/9;
+  display: block;
+  border: none;
+}
+
+.video-preview__play-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.video-preview__play-overlay:hover {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.video-preview__play-btn {
+  width: 48px;
+  height: 48px;
+  background: rgba(6, 6, 14, 0.85);
+  backdrop-filter: blur(8px);
+  border: 2px solid var(--accent-cyan);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-cyan);
+  font-size: 1.2rem;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+  padding-left: 3px;
+}
+
+.video-preview__play-overlay:hover .video-preview__play-btn {
+  transform: scale(1.1);
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.5);
+  color: #fff;
+  border-color: #fff;
+}
+
 .video-preview__thumb {
   width: 100%;
   display: block;
