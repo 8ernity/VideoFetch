@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+temp_downloads/
+server/temp_downloads/
+*.mp4
+*.mp3

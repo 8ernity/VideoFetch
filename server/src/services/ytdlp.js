@@ -29,12 +29,12 @@ if (process.env.NODE_ENV !== 'production' && !fs.existsSync(TEMP_DIR)) {
 
 // Resolve absolute FFmpeg path synchronously on startup
 try {
-  const output = execSync('where ffmpeg', { encoding: 'utf8' });
+  const cmd = process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg';
+  const output = execSync(cmd, { encoding: 'utf8' });
   FFMPEG_PATH = output.split(/[\r\n]+/)[0].trim();
   console.log(`[Init] Resolved FFmpeg path: ${FFMPEG_PATH}`);
 } catch (e) {
-  console.warn('[Init] Could not resolve FFmpeg path via "where", using default "ffmpeg"');
-  // Fallback check for common Winget path if 'where' failed
+  console.warn('[Init] Could not resolve FFmpeg path via CLI, using default "ffmpeg"');
   const fallback = path.join(process.env.LOCALAPPDATA || '', 'Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe');
   if (fs.existsSync(fallback)) {
     FFMPEG_PATH = fallback;
@@ -1126,20 +1126,26 @@ export function customExtractor(url, prevCookies = '') {
         }
         title = title.replace(' - xHamster', '').replace(' - Pornhub.com', '').replace(' - Pornhub.org', '').trim();
 
-        // Parse duration — try multiple patterns, each with different capture semantics
+        // Parse duration — try multiple patterns (meta tags, ISO 8601 PT#M#S, JSON integer properties)
         let duration = null;
         let durationLabel = 'Unknown';
-        const durPT = data.match(/duration\":\s*\"PT(\d+H)?(\d+M)?(\d+S)?\"/i);
-        const durInt = data.match(/\"duration\":\s*(\d+)/) || data.match(/\"video_duration\"\s*:\s*"?(\d+)"?/);
-        if (durPT && (durPT[1] || durPT[2] || durPT[3])) {
+        const metaDurationInt = data.match(/<meta\s+property="video:duration"\s+content="(\d+)"/i);
+        const durPT = data.match(/PT(\d+H)?(\d+M)?(\d+S)?/i);
+        const durInt = data.match(/\"duration\":\s*(\d+)/) ||
+                       data.match(/\"video_duration\"\s*:\s*"?(\d+)"?/) ||
+                       data.match(/videoDuration\s*:\s*(\d+)/i);
+
+        if (metaDurationInt && metaDurationInt[1]) {
+          duration = parseInt(metaDurationInt[1], 10);
+        } else if (durPT && (durPT[1] || durPT[2] || durPT[3])) {
           const h = parseInt(durPT[1]) || 0;
           const m = parseInt(durPT[2]) || 0;
           const s = parseInt(durPT[3]) || 0;
           duration = h * 3600 + m * 60 + s;
-        } else if (durInt) {
-          duration = parseInt(durInt[1]);
+        } else if (durInt && durInt[1]) {
+          duration = parseInt(durInt[1], 10);
         }
-        if (duration) {
+        if (duration && duration > 0) {
           durationLabel = formatDuration(duration);
         }
 
