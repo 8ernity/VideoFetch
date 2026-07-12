@@ -812,6 +812,66 @@ function deduplicateFormats(formats) {
 }
 
 /**
+ * KVS (Kernel Video Sharing) URL hash decoding.
+ * Ported from yt-dlp's _kvs_get_license_token / _kvs_get_real_url.
+ * These sites obfuscate video URLs with function/0/ prefix and a scrambled hash.
+ */
+function kvsGetLicenseToken(licenseCode) {
+  licenseCode = licenseCode.replace(/\$/g, '');
+  const licenseValues = licenseCode.split('').map(c => parseInt(c) || 0);
+  const modlicense = licenseCode.replace(/0/g, '1');
+  const center = Math.floor(modlicense.length / 2);
+  const fronthalf = parseInt(modlicense.substring(0, center + 1));
+  const backhalf = parseInt(modlicense.substring(center));
+  const modResult = String(4 * Math.abs(fronthalf - backhalf)).substring(0, center + 1);
+  const token = [];
+  for (let i = 0; i < modResult.length; i++) {
+    const current = parseInt(modResult[i]);
+    for (let offset = 0; offset < 4; offset++) {
+      if (i + offset < licenseValues.length) {
+        token.push((licenseValues[i + offset] + current) % 10);
+      }
+    }
+  }
+  return token;
+}
+
+function kvsGetRealUrl(videoUrl, licenseCode) {
+  if (!videoUrl.startsWith('function/0/')) return videoUrl;
+  const rawUrl = videoUrl.substring('function/0/'.length);
+  try {
+    const urlObj = new URL(rawUrl);
+    const licenseToken = kvsGetLicenseToken(licenseCode);
+    const urlparts = urlObj.pathname.split('/');
+    const HASH_LENGTH = 32;
+    let hashIndex = -1;
+    for (let i = 0; i < urlparts.length; i++) {
+      if (urlparts[i].length >= HASH_LENGTH && /^[a-f0-9]+/.test(urlparts[i])) {
+        hashIndex = i;
+        break;
+      }
+    }
+    if (hashIndex < 0) return rawUrl;
+    const hashStr = urlparts[hashIndex].substring(0, HASH_LENGTH);
+    const hashRest = urlparts[hashIndex].substring(HASH_LENGTH);
+    const indices = Array.from({ length: HASH_LENGTH }, (_, i) => i);
+    let accum = 0;
+    for (let src = HASH_LENGTH - 1; src >= 0; src--) {
+      accum += licenseToken[src];
+      let dest = (src + accum) % HASH_LENGTH;
+      [indices[src], indices[dest]] = [indices[dest], indices[src]];
+    }
+    const newHash = indices.map(index => hashStr[index]).join('');
+    urlparts[hashIndex] = newHash + hashRest;
+    urlObj.pathname = urlparts.join('/');
+    return urlObj.toString();
+  } catch (e) {
+    console.log('[KVS Decode] Error decoding URL:', e.message);
+    return rawUrl;
+  }
+}
+
+/**
  * Check if the URL hostname points to a Pornhub or phncdn domain.
  */
 function isBypassTarget(urlStr) {
@@ -1277,6 +1337,13 @@ export function customExtractor(url, prevCookies = '') {
             });
           }
         } else if (isPimpBunny) {
+          // Extract license_code for KVS hash decoding
+          const licenseMatch = data.match(/license_code:\s*'([^']+)'/);
+          const licenseCode = licenseMatch ? licenseMatch[1] : '';
+          if (licenseCode) {
+            console.log(`[KVS] Found license_code: ${licenseCode}`);
+          }
+
           const configPatterns = [
             { key: 'video_url', label: '360p' },
             { key: 'video_alt_url', label: 'SD' },
@@ -1289,13 +1356,21 @@ export function customExtractor(url, prevCookies = '') {
           configPatterns.forEach(p => {
             const urlMatch = data.match(new RegExp(`${p.key}:\\s*'([^']+)'`));
             if (urlMatch) {
-              let link = urlMatch[1].replace(/\\\//g, '/').replace(/\\/g, '').replace('function/0/', '');
+              let rawLink = urlMatch[1].replace(/\\\//g, '/').replace(/\\/g, '');
+              // Use KVS decode if license_code is available, else naive strip
+              let link = licenseCode ? kvsGetRealUrl(rawLink, licenseCode) : rawLink.replace('function/0/', '');
               if (link.startsWith('http') && !link.includes('upgrade=true')) {
+                // Detect resolution from filename if label is generic
+                let resLabel = p.label;
+                const fnameRes = link.match(/(\d{3,4})p\.mp4/);
+                if (fnameRes && (resLabel === 'SD' || resLabel === 'HD')) {
+                  resLabel = fnameRes[1] + 'p';
+                }
                 formats.push({
                   format_id: `custom_direct_url|${link}|${cookies}`,
                   ext: 'mp4',
-                  quality: p.label,
-                  resolution: p.label,
+                  quality: resLabel,
+                  resolution: resLabel,
                   filesize_label: 'Unknown',
                   type: 'video+audio'
                 });
@@ -1307,9 +1382,17 @@ export function customExtractor(url, prevCookies = '') {
         // 2. Fallback Generic Scraping (LOWER PRIORITY)
         if (formats.length === 0) {
           const mp4Matches = data.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/g) || [];
+          // Extract license_code for KVS decode if not already done
+          let fallbackLicense = '';
+          if (isPimpBunny) {
+            const flm = data.match(/license_code:\s*'([^']+)'/);
+            fallbackLicense = flm ? flm[1] : '';
+          }
           const uniqueMp4s = [...new Set(mp4Matches.map(m => {
             let link = m.replace(/\\\//g, '/').replace(/\\/g, '');
-            if (isPimpBunny) link = link.replace('function/0/', '');
+            if (isPimpBunny && link.includes('function/0/')) {
+              link = fallbackLicense ? kvsGetRealUrl(link, fallbackLicense) : link.replace('function/0/', '');
+            }
             return link;
           }))]
             .filter(link => !link.includes('_preview.mp4') && !link.toLowerCase().endsWith('.jpg'));
