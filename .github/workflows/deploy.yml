@@ -1,7 +1,6 @@
 # ──────────────────────────────────────────────────────────────
 # 🚀 Automated Deploy Bot
 # Deploys the full-stack app to Vercel on every push to main.
-# Handles both the React client (Vite) and the Express API.
 # ──────────────────────────────────────────────────────────────
 
 name: "🚀 Deploy to Vercel"
@@ -10,10 +9,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch: # Allow manual trigger from GitHub UI
-
-env:
-  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
 jobs:
   # ── Step 1: Lint & Build Validation ───────────────────────
@@ -28,11 +23,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
-          cache: "npm"
-          cache-dependency-path: |
-            package-lock.json
-            client/package-lock.json
-            server/package-lock.json
 
       - name: Install dependencies
         run: |
@@ -48,9 +38,10 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    environment:
-      name: production
-      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,29 +51,9 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
-
-      - name: Pull Vercel config
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Build for Vercel
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
-
       - name: Deploy to Vercel
         id: deploy
         run: |
-          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          DEPLOY_URL=$(npx vercel --prod --token="${VERCEL_TOKEN}" --yes)
           echo "url=$DEPLOY_URL" >> "$GITHUB_OUTPUT"
-          echo "🌐 Deployed to: $DEPLOY_URL"
-
-      - name: Post deployment status
-        if: always()
-        run: |
-          if [ "${{ steps.deploy.outcome }}" = "success" ]; then
-            echo "✅ Deployment successful!"
-            echo "🌐 URL: ${{ steps.deploy.outputs.url }}"
-          else
-            echo "❌ Deployment failed. Check logs above."
-            exit 1
-          fi
+          echo "🌐 Deployed successfully to: $DEPLOY_URL"
