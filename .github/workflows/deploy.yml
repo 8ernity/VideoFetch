@@ -8,10 +8,10 @@ name: "🚀 Deploy to Vercel"
 on:
   push:
     branches: [main]
-  workflow_dispatch: # Allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
-  # ── Step 1: Lint & Build Validation ───────────────────────
+  # ── Step 1: Build Validation ──────────────────────────────
   validate:
     name: "✅ Validate Build"
     runs-on: ubuntu-latest
@@ -26,8 +26,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci --prefix client 2>/dev/null || npm install --prefix client
-          npm ci --prefix server 2>/dev/null || npm install --prefix server
+          npm install --prefix client
+          npm install --prefix server
 
       - name: Build client
         run: npm run build --prefix client
@@ -38,6 +38,9 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,10 +50,17 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel Environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with Vercel
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
       - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: "--prod"
+        id: deploy
+        run: |
+          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "🌐 Deployed to: $DEPLOY_URL"
