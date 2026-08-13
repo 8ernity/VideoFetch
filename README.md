@@ -40,7 +40,7 @@ A modern, responsive web application for downloading publicly accessible videos 
 ## 🏗️ System Architecture Diagram
 
 ```mermaid
-flowchart TD
+flowchart LR
     %% Color Styling
     classDef client fill:#1e40af,stroke:#3b82f6,color:#fff;
     classDef middleware fill:#6b21a8,stroke:#a855f7,color:#fff;
