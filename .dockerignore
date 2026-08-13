@@ -1,0 +1,10 @@
+node_modules
+.git
+.vercel
+dist
+client/dist
+client/node_modules
+server/node_modules
+server/temp_downloads
+temp_downloads
+*.log
