@@ -37,28 +37,65 @@ A modern, responsive web application for downloading publicly accessible videos 
 
 ---
 
-## 🔄 Data Flow Diagram
+## 🏗️ System Architecture Diagram
 
 ```mermaid
-graph LR
+flowchart TD
+    %% Custom Color Palette Styles
+    classDef client fill:#1e40af,stroke:#3b82f6,stroke-width:2px,color:#ffffff;
+    classDef middleware fill:#6b21a8,stroke:#a855f7,stroke-width:2px,color:#ffffff;
+    classDef decision fill:#b45309,stroke:#f59e0b,stroke-width:2px,color:#ffffff;
+    classDef engine fill:#0e7490,stroke:#06b6d4,stroke-width:2px,color:#ffffff;
+    classDef success fill:#047857,stroke:#10b981,stroke-width:2px,color:#ffffff;
+    classDef danger fill:#b91c1c,stroke:#ef4444,stroke-width:2px,color:#ffffff;
+    classDef storage fill:#4338ca,stroke:#6366f1,stroke-width:2px,color:#ffffff;
 
-    USER[User]
-    UI[Frontend]
-    SYSTEM[Backend System]
-    ENGINE[Video Engine]
-    STORAGE[(Storage)]
+    USER["🌐 Web Browser<br/>(React + Vite Client)"]:::client
+    CLIP["📋 Clipboard / Drag & Drop<br/>Auto-Detect Listener"]:::client
+    HIST["🗂️ LocalStorage<br/>Client History Store"]:::storage
 
-    USER -->|Paste URL| UI
-    UI -->|Send Request| SYSTEM
+    MIDDLEWARE["🛡️ Helmet & Rate Limiter<br/>Express Middleware Layer"]:::middleware
 
-    SYSTEM -->|Process URL| ENGINE
-    ENGINE -->|Extract Streams| SYSTEM
+    CHECK_DRM{"🚫 Check DRM &<br/>Blocklist Status"}:::decision
+    REJECT_DRM["🔴 Instant 403 Forbidden<br/>DRM Protected / Blocked Site"]:::danger
 
-    SYSTEM -->|Download File| STORAGE
-    STORAGE -->|Return File| SYSTEM
+    ROUTER["⚡ Express.js Router<br/>(/api/video/info & /api/video/download)"]:::middleware
 
-    SYSTEM -->|Send Response| UI
-    UI -->|Show Download| USER
+    SELECT_ENGINE{"🔍 Site Type & Engine Dispatcher"}:::decision
+
+    CUSTOM_EXTRACTOR["🔑 Custom JS Scraper & Deobfuscator<br/>(KVS Token Decoder & Crypto Swap)"]:::engine
+    YTDLP_ENGINE["🐍 yt-dlp CLI Engine<br/>(Metadata & Stream Extractor)"]:::engine
+
+    TRIM_CHECK{"✂️ Partial Trim Requested?<br/>(start & end timestamps)"}:::decision
+
+    DIRECT_STREAM["🚀 Direct Chunk Streamer<br/>(On-The-Fly HTTP Piping)"]:::engine
+    PROXY_FFMPEG["🎬 Range Proxy + FFmpeg<br/>(Selective Byte-Range Trimming)"]:::engine
+
+    SUCCESS_RES["✅ 200 OK — Stream Output / JSON<br/>Media Content Delivered"]:::success
+
+    %% Flow Connections
+    USER -->|Submits Video URL| MIDDLEWARE
+    CLIP -->|Auto-Paste Event| USER
+    HIST <-->|Syncs Downloads| USER
+
+    MIDDLEWARE --> CHECK_DRM
+
+    CHECK_DRM -->|DRM / Blocked Domain| REJECT_DRM
+    CHECK_DRM -->|Allowed Domain| ROUTER
+
+    ROUTER --> SELECT_ENGINE
+
+    SELECT_ENGINE -->|Pornhub / xHamster / Pimpbunny| CUSTOM_EXTRACTOR
+    SELECT_ENGINE -->|YouTube / Vimeo / Generic| YTDLP_ENGINE
+
+    CUSTOM_EXTRACTOR --> TRIM_CHECK
+    YTDLP_ENGINE --> TRIM_CHECK
+
+    TRIM_CHECK -->|Full Video Download| DIRECT_STREAM
+    TRIM_CHECK -->|Partial Section Trim| PROXY_FFMPEG
+
+    DIRECT_STREAM --> SUCCESS_RES
+    PROXY_FFMPEG --> SUCCESS_RES
 ```
 
 ## Project Structure
