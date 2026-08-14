@@ -67,8 +67,8 @@ app.use((err, _req, res, _next) => {
 /* ── Start ── */
 // Listen in standalone Node environments (Render, Railway, Docker, Local Dev)
 if (process.env.VERCEL !== '1') {
-  app.listen(PORT, () => {
-    console.log(`\n  ⚡ VideoFetch server running on port ${PORT}\n`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  ⚡ VideoFetch server running on port ${PORT} (0.0.0.0)\n`);
   });
 }
 

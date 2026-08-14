@@ -6,11 +6,11 @@
     "node": ">=18"
   },
   "scripts": {
-    "install-all": "npm install --prefix client && npm install --prefix server",
+    "install-all": "npm install && npm install --prefix server && npm install --prefix client",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
-    "dev": "node -e \"const { spawn } = require('child_process'); spawn('npm', ['run', 'dev', '--prefix', 'server'], { stdio: 'inherit', shell: true }); spawn('npm', ['run', 'dev', '--prefix', 'client'], { stdio: 'inherit', shell: true });\"",
-    "build": "cd client && npm install && npm run build"
+    "build": "npm install && npm install --prefix server && npm install --prefix client && npm run build --prefix client",
+    "start": "node server/src/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
