@@ -3,6 +3,8 @@
  */
 
 import { Router } from 'express';
+import http from 'http';
+import https from 'https';
 import { validateVideoUrl, validateDownloadParams } from '../middleware/validator.js';
 import { getVideoInfo, streamDownload } from '../services/ytdlp.js';
 import { sanitizeFilename } from '../utils/helpers.js';
@@ -29,6 +31,41 @@ router.post('/info', validateVideoUrl, async (req, res) => {
 });
 
 /**
+ * GET /api/video/thumbnail?url=...
+ * Proxies thumbnail images with referer bypass.
+ */
+router.get('/thumbnail', async (req, res) => {
+  try {
+    const imageUrl = req.query.url;
+    if (!imageUrl || !imageUrl.startsWith('http')) {
+      return res.status(400).send('Invalid image URL');
+    }
+
+    const parsed = new URL(imageUrl);
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Referer': `${parsed.protocol}//${parsed.hostname}/`,
+    };
+
+    const client = imageUrl.startsWith('https') ? https : http;
+    const request = client.get(imageUrl, { headers }, (imgRes) => {
+      if (imgRes.statusCode >= 400) {
+        return res.status(imgRes.statusCode).send('Image fetch failed');
+      }
+      res.setHeader('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      imgRes.pipe(res);
+    });
+
+    request.on('error', () => {
+      if (!res.headersSent) res.status(500).send('Failed to proxy image');
+    });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).send(err.message);
+  }
+});
+
+/**
  * GET /api/video/download?url=...&format_id=...&title=...
  * Streams the requested format to the client.
  */
@@ -42,7 +79,6 @@ router.get('/download', validateDownloadParams, async (req, res) => {
       : null;
 
     const setDownloadHeaders = () => {
-      // Use RFC 5987 encoding for the filename to handle all special characters safely
       const encodedName = encodeURIComponent(`${title}.${ext}`);
       res.setHeader('Content-Disposition', `attachment; filename="video.${ext}"; filename*=UTF-8''${encodedName}`);
       res.setHeader('Content-Type', 'application/octet-stream');
@@ -52,20 +88,16 @@ router.get('/download', validateDownloadParams, async (req, res) => {
     try {
       await streamDownload(req.videoUrl, req.formatId, req.videoType, res, setDownloadHeaders, false, trimOpts);
     } catch (err) {
-      // If the link is expired (403/404), try to refresh it once automatically
       if (err.statusCode === 403 || err.statusCode === 404) {
         console.log(`[Download] Link expired (status ${err.statusCode}), attempting refresh for: ${req.videoUrl}`);
-        
         try {
           const freshInfo = await getVideoInfo(req.videoUrl);
           const oldFormatId = req.formatId;
           let newFormat = null;
           
           if (oldFormatId.startsWith('custom_direct_url|')) {
-            // Find the best available custom direct URL
             newFormat = freshInfo.formats.find(f => f.format_id.startsWith('custom_direct_url|'));
           } else {
-            // Try to find the exact same format ID, or fall back to the first available format
             newFormat = freshInfo.formats.find(f => f.format_id === oldFormatId) || freshInfo.formats[0];
           }
 
@@ -91,7 +123,6 @@ router.get('/download', validateDownloadParams, async (req, res) => {
 /**
  * GET /api/video/stream?url=...&format_id=...
  * Proxies the video stream to the client for playback and previewing.
- * Supports HTTP Range requests and forwards them to the CDN.
  */
 router.get('/stream', validateDownloadParams, async (req, res) => {
   try {

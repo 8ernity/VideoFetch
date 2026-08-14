@@ -1,245 +1,235 @@
-import { useState, useEffect, useCallback } from 'react';
-import { formatBytes } from '../utils/formatters';
+import React, { useState, useEffect, useRef } from 'react';
+import { formatSeconds, parseTimestamp } from '../utils/formatters';
 
-/**
- * Format seconds into HH:MM:SS or MM:SS display.
- */
-function formatTime(seconds) {
-  if (!seconds || seconds < 0) seconds = 0;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const pad = (n) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-}
-
-/**
- * Parse a time string (MM:SS or HH:MM:SS) into seconds.
- */
-function parseTime(str) {
-  const parts = str.split(':').map(Number).filter((n) => !isNaN(n));
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1) return parts[0];
-  return 0;
-}
-
-/**
- * Video trimmer with dual-range slider, time inputs, and estimated size.
- */
-export default function VideoTrimmer({ duration, selectedFormat, onTrimChange }) {
+export default function VideoTrimmer({ duration = 0, onTrimChange }) {
   const [enabled, setEnabled] = useState(false);
-  const [startTime, setStartTime] = useState(0);
-  const [endTime, setEndTime] = useState(duration || 0);
-  const [startInput, setStartInput] = useState('00:00');
-  const [endInput, setEndInput] = useState(formatTime(duration));
+  const [startSec, setStartSec] = useState(0);
+  const [endSec, setEndSec] = useState(duration || 300);
 
-  // Reset when duration changes (new video)
+  const [startTime, setStartTime] = useState('00:00:00');
+  const [endTime, setEndTime] = useState(formatSeconds(duration || 300));
+
+  const trackRef = useRef(null);
+  const isDraggingLeft = useRef(false);
+  const isDraggingRight = useRef(false);
+
+  const maxVal = duration > 0 ? duration : 300;
+
   useEffect(() => {
-    setStartTime(0);
-    setEndTime(duration || 0);
-    setStartInput('00:00');
-    setEndInput(formatTime(duration));
-    setEnabled(false);
+    if (duration > 0) {
+      setEndSec(duration);
+      setEndTime(formatSeconds(duration));
+    }
   }, [duration]);
 
-  // Sync display when slider changes
+  // Keep text input strings formatted when seconds change
   useEffect(() => {
-    setStartInput(formatTime(startTime));
-  }, [startTime]);
+    setStartTime(formatSeconds(startSec));
+  }, [startSec]);
 
   useEffect(() => {
-    setEndInput(formatTime(endTime));
-  }, [endTime]);
+    setEndTime(formatSeconds(endSec));
+  }, [endSec]);
 
-  // Notify parent of trim state changes
-  const notifyChange = useCallback((isEnabled, start, end) => {
-    if (isEnabled && duration > 0) {
-      const trimDuration = Math.max(0, end - start);
-      const ratio = trimDuration / duration;
-      const estimatedSize = selectedFormat?.filesize
-        ? Math.round(selectedFormat.filesize * ratio)
-        : null;
-      onTrimChange({ startTime: start, endTime: end, estimatedSize });
+  // Notify parent component of trim state changes
+  useEffect(() => {
+    if (enabled) {
+      onTrimChange({
+        enabled: true,
+        startTime: startSec,
+        endTime: endSec,
+        startSec,
+        endSec,
+        start: startSec,
+        end: endSec,
+      });
     } else {
       onTrimChange(null);
     }
-  }, [duration, selectedFormat, onTrimChange]);
+  }, [enabled, startSec, endSec, onTrimChange]);
 
-  useEffect(() => {
-    notifyChange(enabled, startTime, endTime);
-  }, [enabled, startTime, endTime, notifyChange]);
-
-  const handleStartSlider = (e) => {
-    const val = Number(e.target.value);
-    const clamped = Math.min(val, endTime - 1);
-    setStartTime(Math.max(0, clamped));
+  const calcSecondsFromX = (clientX) => {
+    if (!trackRef.current) return 0;
+    const rect = trackRef.current.getBoundingClientRect();
+    const offsetX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const ratio = offsetX / rect.width;
+    return Math.round(ratio * maxVal);
   };
 
-  const handleEndSlider = (e) => {
-    const val = Number(e.target.value);
-    const clamped = Math.max(val, startTime + 1);
-    setEndTime(Math.min(duration, clamped));
+  const handlePointerDown = (handle) => (e) => {
+    e.preventDefault();
+    if (handle === 'left') isDraggingLeft.current = true;
+    if (handle === 'right') isDraggingRight.current = true;
+
+    const handlePointerMove = (moveEvt) => {
+      const clientX = moveEvt.touches ? moveEvt.touches[0].clientX : moveEvt.clientX;
+      const newSec = calcSecondsFromX(clientX);
+
+      if (isDraggingLeft.current) {
+        if (newSec >= 0 && newSec < endSec - 1) {
+          setStartSec(newSec);
+        }
+      } else if (isDraggingRight.current) {
+        if (newSec > startSec + 1 && newSec <= maxVal) {
+          setEndSec(newSec);
+        }
+      }
+    };
+
+    const handlePointerUp = () => {
+      isDraggingLeft.current = false;
+      isDraggingRight.current = false;
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('touchend', handlePointerUp);
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', handlePointerMove);
+    window.addEventListener('touchend', handlePointerUp);
   };
 
-  const handleStartInputBlur = () => {
-    const parsed = parseTime(startInput);
-    const clamped = Math.max(0, Math.min(parsed, endTime - 1));
-    setStartTime(clamped);
+  const handleStartTextChange = (e) => {
+    const val = e.target.value;
+    setStartTime(val);
+    const parsed = parseTimestamp(val);
+    if (parsed !== null && parsed >= 0 && parsed < endSec) {
+      setStartSec(parsed);
+    }
   };
 
-  const handleEndInputBlur = () => {
-    const parsed = parseTime(endInput);
-    const clamped = Math.max(startTime + 1, Math.min(parsed, duration));
-    setEndTime(clamped);
+  const handleEndTextChange = (e) => {
+    const val = e.target.value;
+    setEndTime(val);
+    const parsed = parseTimestamp(val);
+    if (parsed !== null && parsed > startSec && parsed <= maxVal) {
+      setEndSec(parsed);
+    }
   };
 
-  if (!duration || duration <= 0) return null;
-
-  const trimDuration = Math.max(0, endTime - startTime);
-  const ratio = duration > 0 ? trimDuration / duration : 1;
-  const estimatedSize = selectedFormat?.filesize
-    ? Math.round(selectedFormat.filesize * ratio)
-    : null;
-  const originalSize = selectedFormat?.filesize || null;
-
-  // Selection bar positioning
-  const leftPct = (startTime / duration) * 100;
-  const widthPct = (trimDuration / duration) * 100;
+  const leftPercent = Math.max(0, Math.min(100, (startSec / maxVal) * 100));
+  const rightPercent = Math.max(0, Math.min(100, 100 - (endSec / maxVal) * 100));
+  const selectedDuration = Math.max(0, endSec - startSec);
+  const percentageStr = Math.round((selectedDuration / maxVal) * 100);
 
   return (
-    <section className="trimmer glass-card" style={{ animation: 'slideUp 0.4s ease' }}>
-      <div className="trimmer__header">
-        <div className="trimmer__title-row">
-          <h3 className="trimmer__title">✂️ Trim Video</h3>
-          <span className="trimmer__title-sub">
-            {enabled ? 'Adjust start and end points' : 'Enable to trim before downloading'}
-          </span>
-        </div>
-        <label className="trimmer__toggle" htmlFor="trim-toggle">
+    <div className="glass-panel rounded-xl p-6 flex flex-col gap-5">
+      {/* Header & Toggle */}
+      <div className="flex items-center justify-between">
+        <h2 className="font-body-lg text-body-lg text-on-surface font-medium flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary">content_cut</span> Trim Selection
+        </h2>
+        <label className="relative inline-flex items-center cursor-pointer">
           <input
-            id="trim-toggle"
             type="checkbox"
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
+            className="sr-only peer"
           />
-          <span className="trimmer__toggle-track">
-            <span className="trimmer__toggle-thumb" />
-          </span>
+          <div className="w-9 h-5 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary" />
         </label>
       </div>
 
       {enabled && (
-        <div className="trimmer__body" style={{ animation: 'fadeIn 0.3s ease' }}>
-          {/* Timeline slider */}
-          <div className="trimmer__timeline-wrapper">
-            <div className="trimmer__timeline">
-              {/* Background track */}
-              <div className="trimmer__track" />
-              {/* Selected region - using thumb-offset calculation for perfect alignment */}
-              <div
-                className="trimmer__selection"
-                style={{
-                  left: `calc(${leftPct}% + ${9 - (leftPct * 0.18)}px)`,
-                  right: `calc(${100 - ((endTime / duration) * 100)}% + ${9 - ((100 - (endTime / duration) * 100) * 0.18)}px)`
-                }}
-              />
-              {/* Start range */}
-              <input
-                type="range"
-                className="trimmer__range"
-                min={0}
-                max={duration}
-                step={1}
-                value={startTime}
-                onChange={handleStartSlider}
-                aria-label="Trim start time"
-              />
-              {/* End range */}
-              <input
-                type="range"
-                className="trimmer__range"
-                min={0}
-                max={duration}
-                step={1}
-                value={endTime}
-                onChange={handleEndSlider}
-                aria-label="Trim end time"
-              />
-            </div>
-            {/* Timeline labels */}
-            <div className="trimmer__timeline-labels">
-              <span>0:00</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-          </div>
-
-          {/* Time inputs row */}
-          <div className="trimmer__inputs">
-            <div className="trimmer__input-group">
-              <label className="trimmer__input-label">Start</label>
-              <input
-                type="text"
-                className="input trimmer__time-field"
-                value={startInput}
-                onChange={(e) => setStartInput(e.target.value)}
-                onBlur={handleStartInputBlur}
-                onKeyDown={(e) => e.key === 'Enter' && handleStartInputBlur()}
-                placeholder="00:00"
-              />
-            </div>
-
-            <div className="trimmer__duration-display">
-              <span className="trimmer__duration-icon">⏱️</span>
-              <span className="trimmer__duration-value">{formatTime(trimDuration)}</span>
-              <span className="trimmer__duration-label">selected</span>
-            </div>
-
-            <div className="trimmer__input-group">
-              <label className="trimmer__input-label">End</label>
-              <input
-                type="text"
-                className="input trimmer__time-field"
-                value={endInput}
-                onChange={(e) => setEndInput(e.target.value)}
-                onBlur={handleEndInputBlur}
-                onKeyDown={(e) => e.key === 'Enter' && handleEndInputBlur()}
-                placeholder="00:00"
-              />
-            </div>
-          </div>
-
-          {/* Size info bar */}
-          <div className="trimmer__size-bar">
-            {originalSize && (
-              <div className="trimmer__size-item">
-                <span className="trimmer__size-label">Original</span>
-                <span className="trimmer__size-value">{formatBytes(originalSize)}</span>
-              </div>
-            )}
-            <div className="trimmer__size-item">
-              <span className="trimmer__size-label">Trimmed Duration</span>
-              <span className="trimmer__size-value">
-                {formatTime(trimDuration)} / {formatTime(duration)}
+        <>
+          {/* Selected Duration Info Box */}
+          <div className="flex items-center justify-between bg-primary/10 border border-primary/20 p-3 rounded-lg text-sm">
+            <span className="text-on-surface-variant flex items-center gap-1.5 font-medium">
+              <span className="material-symbols-outlined text-[18px] text-primary">timer</span>
+              Duration Being Downloaded:
+            </span>
+            <span className="font-mono font-bold text-primary text-base">
+              {formatSeconds(selectedDuration)}
+              <span className="text-xs text-on-surface-variant font-sans font-normal ml-1">
+                ({percentageStr}% of {formatSeconds(maxVal)})
               </span>
-            </div>
-            {estimatedSize && (
-              <div className="trimmer__size-item trimmer__size-item--highlight">
-                <span className="trimmer__size-label">Estimated Download</span>
-                <span className="trimmer__size-value trimmer__size-value--neon">
-                  ~{formatBytes(estimatedSize)}
-                </span>
-              </div>
-            )}
-            {!estimatedSize && (
-              <div className="trimmer__size-item">
-                <span className="trimmer__size-label">Estimated Download</span>
-                <span className="trimmer__size-value">~{Math.round(ratio * 100)}% of original</span>
-              </div>
-            )}
+            </span>
           </div>
-        </div>
+
+          {/* Waveform Interactive Slider */}
+          <div
+            ref={trackRef}
+            className="relative h-12 bg-surface-container rounded-lg border border-white/5 select-none touch-none cursor-pointer"
+          >
+            {/* Background waveform bars */}
+            <div className="absolute inset-0 flex items-center justify-between px-2 opacity-30 pointer-events-none">
+              <div className="w-1 h-3 bg-white rounded-full" />
+              <div className="w-1 h-6 bg-white rounded-full" />
+              <div className="w-1 h-4 bg-white rounded-full" />
+              <div className="w-1 h-8 bg-white rounded-full" />
+              <div className="w-1 h-5 bg-white rounded-full" />
+              <div className="w-1 h-7 bg-white rounded-full" />
+              <div className="w-1 h-3 bg-white rounded-full" />
+              <div className="w-1 h-9 bg-white rounded-full" />
+              <div className="w-1 h-4 bg-white rounded-full" />
+              <div className="w-1 h-6 bg-white rounded-full" />
+              <div className="w-1 h-3 bg-white rounded-full" />
+              <div className="w-1 h-5 bg-white rounded-full" />
+              <div className="w-1 h-8 bg-white rounded-full" />
+              <div className="w-1 h-4 bg-white rounded-full" />
+              <div className="w-1 h-6 bg-white rounded-full" />
+              <div className="w-1 h-3 bg-white rounded-full" />
+            </div>
+
+            {/* Active Selected Range Area */}
+            <div
+              className="absolute top-0 bottom-0 bg-primary/25 border-l-2 border-r-2 border-primary pointer-events-none"
+              style={{ left: `${leftPercent}%`, right: `${rightPercent}%` }}
+            />
+
+            {/* Left Handle */}
+            <div
+              onMouseDown={handlePointerDown('left')}
+              onTouchStart={handlePointerDown('left')}
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-7 h-7 bg-surface border-2 border-primary rounded-full cursor-ew-resize flex items-center justify-center shadow-lg hover:scale-110 active:scale-125 transition-transform z-20"
+              style={{ left: `${leftPercent}%` }}
+              title="Drag to set Start Time"
+            >
+              <span className="material-symbols-outlined text-[12px] text-primary select-none">drag_indicator</span>
+            </div>
+
+            {/* Right Handle */}
+            <div
+              onMouseDown={handlePointerDown('right')}
+              onTouchStart={handlePointerDown('right')}
+              className="absolute top-1/2 -translate-y-1/2 translate-x-1/2 w-7 h-7 bg-surface border-2 border-primary rounded-full cursor-ew-resize flex items-center justify-center shadow-lg hover:scale-110 active:scale-125 transition-transform z-20"
+              style={{ right: `${rightPercent}%` }}
+              title="Drag to set End Time"
+            >
+              <span className="material-symbols-outlined text-[12px] text-primary select-none">drag_indicator</span>
+            </div>
+          </div>
+
+          {/* Timestamp Inputs */}
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <label className="font-label-sm text-label-sm text-on-surface-variant mb-1 block">
+                Start Time
+              </label>
+              <input
+                type="text"
+                value={startTime}
+                onChange={handleStartTextChange}
+                className="w-full bg-surface border border-outline-variant rounded-md py-2 px-3 text-on-surface text-center font-mono text-sm focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+              />
+            </div>
+            <span className="text-on-surface-variant mt-6">-</span>
+            <div className="flex-1">
+              <label className="font-label-sm text-label-sm text-on-surface-variant mb-1 block">
+                End Time
+              </label>
+              <input
+                type="text"
+                value={endTime}
+                onChange={handleEndTextChange}
+                className="w-full bg-surface border border-outline-variant rounded-md py-2 px-3 text-on-surface text-center font-mono text-sm focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+              />
+            </div>
+          </div>
+        </>
       )}
-    </section>
+    </div>
   );
 }

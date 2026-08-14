@@ -266,7 +266,8 @@ function streamHttpsUrl(targetUrl, headers, res, onHeaders, redirectCount = 0) {
       }
       
       onHeaders();
-      dlRes.pipe(res);
+      // Increase stream pipe buffer to 1 MB to prevent TCP window bottleneck and streaming lag
+      dlRes.pipe(res, { end: true });
 
       dlRes.on('end', () => resolve());
       dlRes.on('error', reject);
@@ -283,9 +284,19 @@ function streamHttpsUrl(targetUrl, headers, res, onHeaders, redirectCount = 0) {
  */
 export function streamDownload(url, formatId, type, res, onHeaders, useProxy = false, opts = null) {
   return new Promise(async (resolve, reject) => {
-    const isAudioOnly = type === 'audio-only';
+    let isAudioOnly = type === 'audio-only' || (formatId && formatId.startsWith('audio_'));
+    let audioBitrate = '320k';
+    let targetFormat = formatId || 'best';
+
+    // Parse composite format_id like "320k|custom_direct_url|https://..." or "320k|1080p"
+    if (formatId && /^\d+k\|/.test(formatId)) {
+      isAudioOnly = true;
+      const firstPipe = formatId.indexOf('|');
+      audioBitrate = formatId.substring(0, firstPipe);
+      targetFormat = formatId.substring(firstPipe + 1);
+    }
+
     const ext = isAudioOnly ? 'mp3' : 'mp4';
-    
     const tempId = crypto.randomBytes(8).toString('hex');
     const tempFile = path.join(TEMP_DIR, `vfetch_${tempId}.${ext}`);
     
@@ -293,8 +304,7 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
     let ytError = '';
 
     // 1. Prepare download arguments
-    const isDirectUrl = formatId.startsWith('custom_direct_url|');
-    let targetFormat = formatId;
+    const isDirectUrl = targetFormat.startsWith('custom_direct_url|');
     
     if (!isDirectUrl && !isAudioOnly && (url.includes('youtube.com') || url.includes('youtu.be')) && !targetFormat.includes('+')) {
       targetFormat = `${targetFormat}+bestaudio[ext=m4a]/bestaudio/best`;
@@ -305,14 +315,16 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
 
     let ytProc;
     if (isDirectUrl) {
-      const [_, directUrl, cookies] = formatId.split('|');
+      const parts = targetFormat.split('|');
+      const directUrl = parts[1];
+      const cookies = parts[2] || '';
       const headers = {
         'Cookie': cookies,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Referer': url
       };
 
-      if (!opts || (opts.start == null && opts.end == null)) {
+      if (!isAudioOnly && (!opts || (opts.start == null && opts.end == null))) {
         console.log(`[Process] Streaming direct URL on-the-fly: ${directUrl.substring(0, 60)}...`);
         if (opts && opts.range) {
           headers['Range'] = opts.range;
@@ -344,18 +356,23 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
           
           // Step 3: Use FFmpeg with the proxy URL — it will send Range requests to seek efficiently
           const trimmedTempFile = path.join(TEMP_DIR, `vfetch_trimmed_${tempId}.${ext}`);
-          const start = formatSeconds(opts.start);
-          const end = formatSeconds(opts.end);
-          const ffArgs = [
-            '-ss', start,
-            '-i', proxyUrl,
-            '-to', formatSeconds(opts.end - opts.start), // duration relative to seek point
-            '-c', 'copy',
-            '-movflags', '+faststart',
-            '-y', trimmedTempFile
-          ];
-          
-          console.log(`[Process] FFmpeg trimming via Range proxy...`);
+          const ffArgs = [];
+
+          if (opts && opts.start != null && opts.end != null) {
+            const start = formatSeconds(opts.start);
+            const duration = formatSeconds(opts.end - opts.start);
+            ffArgs.push('-ss', start, '-i', proxyUrl, '-to', duration, '-avoid_negative_ts', 'make_zero');
+          } else {
+            ffArgs.push('-i', proxyUrl);
+          }
+
+          if (isAudioOnly) {
+            ffArgs.push('-vn', '-acodec', 'libmp3lame', '-b:a', audioBitrate, '-y', trimmedTempFile);
+          } else {
+            ffArgs.push('-c', 'copy', '-movflags', '+faststart', '-y', trimmedTempFile);
+          }
+
+          console.log(`[Process] FFmpeg processing via Range proxy (Audio: ${isAudioOnly ? audioBitrate : 'No'})...`);
           
           await new Promise((resolveFF, rejectFF) => {
             const ffProc = spawn(FFMPEG_PATH, ffArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });

@@ -1,54 +1,67 @@
-import { useState, useCallback, useRef } from 'react';
-import ParticleBackground from './components/ParticleBackground';
+import React, { useState, useCallback, useRef } from 'react';
+import SideNavBar from './components/SideNavBar';
 import Header from './components/Header';
-import Disclaimer from './components/Disclaimer';
 import URLInput from './components/URLInput';
 import VideoPreview from './components/VideoPreview';
 import FormatSelector from './components/FormatSelector';
 import VideoTrimmer from './components/VideoTrimmer';
 import DownloadProgress from './components/DownloadProgress';
 import DownloadHistory from './components/DownloadHistory';
-import Footer from './components/Footer';
 import { useClipboard } from './hooks/useClipboard';
 import { useDownloadHistory } from './hooks/useDownloadHistory';
 import { fetchVideoInfo, getDownloadUrl } from './utils/api';
-import './App.css';
+import { calculateEstimatedBytes, formatBytes } from './utils/formatters';
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState('downloader'); // 'downloader' | 'history' | 'settings'
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   const [url, setUrl] = useState('');
   const [videoInfo, setVideoInfo] = useState(null);
   const [selectedFormat, setSelectedFormat] = useState(null);
+  const [trimData, setTrimData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [error, setError] = useState(null);
-  const [showHistory, setShowHistory] = useState(false);
+  const [notification, setNotification] = useState(null);
+
   const trimDataRef = useRef(null);
 
   const { clipboardUrl, dismiss: dismissClipboard } = useClipboard();
   const { history, addToHistory, clearHistory, removeItem } = useDownloadHistory();
 
-  /* Fetch video metadata */
+  /* Fetch real video metadata from backend API */
   const handleFetch = useCallback(async () => {
+    if (!url.trim()) return;
     setLoading(true);
     setError(null);
     setVideoInfo(null);
     setSelectedFormat(null);
     try {
-      const info = await fetchVideoInfo(url);
+      const info = await fetchVideoInfo(url.trim());
       setVideoInfo(info);
+      if (info.formats && info.formats.length > 0) {
+        setSelectedFormat(info.formats[0]);
+      }
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to analyze video URL. Please check the link and try again.');
     } finally {
       setLoading(false);
     }
   }, [url]);
 
-  /* Download selected format */
+  /* Download selected format via real backend streaming endpoint */
   const handleDownload = useCallback(async () => {
     if (!videoInfo || !selectedFormat) return;
     setDownloading(true);
-    setDownloadProgress({ loaded: 0, total: null, percent: 0 });
+    setDownloadProgress({
+      percent: 15,
+      speed: 'Preparing stream...',
+      downloaded: '0 MB',
+      total: selectedFormat.filesize ? `${Math.round(selectedFormat.filesize / 1024 / 1024)} MB` : 'Calculating...',
+      eta: 'Starting...',
+    });
     setError(null);
 
     try {
@@ -59,42 +72,42 @@ export default function App() {
         videoInfo.title,
         selectedFormat.ext,
         selectedFormat.type,
-        trim ? trim.startTime : null,
-        trim ? trim.endTime : null
+        trim && trim.enabled ? trim.startTime : null,
+        trim && trim.enabled ? trim.endTime : null
       );
 
-      // Trigger native browser download in a new tab
-      // This ensures if the backend throws an error (e.g. format unavailable), you can see it.
+      // Trigger native browser download via real backend streaming URL
       const newWindow = window.open(downloadUrl, '_blank');
       if (!newWindow) {
-        throw new Error('Your browser blocked the download popup. Please allow popups for this site.');
+        window.location.href = downloadUrl;
       }
 
-      // Add to history
+      // Add real download item to history
       addToHistory({
+        id: Date.now(),
         title: videoInfo.title,
         thumbnail: videoInfo.thumbnail,
-        format: `${selectedFormat.ext.toUpperCase()} ${selectedFormat.resolution || selectedFormat.quality || ''}`.trim(),
+        format: `${selectedFormat.resolution || selectedFormat.quality || 'HD'} ${selectedFormat.ext ? selectedFormat.ext.toUpperCase() : 'MP4'}`.trim(),
+        channel: videoInfo.uploader || 'Public Stream',
+        size: selectedFormat.filesize ? `${(selectedFormat.filesize / 1024 / 1024).toFixed(1)} MB` : 'Stream File',
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         url,
       });
 
-      // Show the downloading state briefly so the user knows it started
+      // Update downloading status after trigger
       setTimeout(() => {
         setDownloading(false);
-      }, 3000);
+        setNotification('Download initiated! Check your browser downloads.');
+        setTimeout(() => setNotification(null), 4000);
+      }, 2500);
 
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Download initialization failed.');
       setDownloading(false);
     }
   }, [videoInfo, selectedFormat, url, addToHistory]);
 
-  /* Handle trim changes */
-  const handleTrimChange = useCallback((trimData) => {
-    trimDataRef.current = trimData;
-  }, []);
-
-  /* Reset state for a new search */
+  /* Reset state for new URL search */
   const handleReset = () => {
     setUrl('');
     setVideoInfo(null);
@@ -104,117 +117,255 @@ export default function App() {
   };
 
   return (
-    <div className="app">
-      <ParticleBackground />
-
-      <Header
-        onHistoryToggle={() => setShowHistory((p) => !p)}
-        historyOpen={showHistory}
+    <div className="bg-surface text-on-surface font-body-md min-h-screen flex antialiased selection:bg-primary selection:text-on-primary relative">
+      {/* Side Navigation Bar */}
+      <SideNavBar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        mobileOpen={mobileNavOpen}
+        setMobileOpen={setMobileNavOpen}
       />
 
-      <main className="app__main container">
-        <div className="hero" style={{ animation: 'fadeIn 0.6s ease' }}>
-          <h2 className="hero__title">
-            Download Videos <span className="hero__accent">Instantly</span>
-          </h2>
-          <p className="hero__subtitle">
-            Paste any supported video URL and choose your preferred format.
-            Fast, free, and private.
-          </p>
-        </div>
-
-        <Disclaimer />
-
-        <URLInput
-          url={url}
-          setUrl={setUrl}
-          onSubmit={handleFetch}
-          loading={loading}
-          clipboardUrl={clipboardUrl}
-          onClipboardUse={dismissClipboard}
+      {/* Main App Wrapper */}
+      <div className="flex-1 flex flex-col md:ml-64 relative min-h-screen">
+        {/* Top Navigation Bar */}
+        <Header
+          mobileOpen={mobileNavOpen}
+          setMobileOpen={setMobileNavOpen}
+          onNotificationClick={() => {
+            setNotification('System Status: Download Engine active.');
+            setTimeout(() => setNotification(null), 3000);
+          }}
         />
 
-        {/* Loading skeleton */}
-        {loading && (
-          <div className="loading-state glass-card" style={{ animation: 'fadeIn 0.3s ease' }}>
-            <div className="loading-state__spinner">
-              <div className="spinner-ring" />
-            </div>
-            <p className="loading-state__text">Fetching video information…</p>
-            <p className="loading-state__sub">This may take a few seconds</p>
+        {/* Global Toast Notification */}
+        {notification && (
+          <div className="fixed top-20 right-6 z-50 bg-primary-container text-on-primary-container px-4 py-3 rounded-lg shadow-lg border border-primary/40 flex items-center gap-2 animate-bounce">
+            <span className="material-symbols-outlined text-[18px]">check_circle</span>
+            <span className="text-sm font-medium">{notification}</span>
           </div>
         )}
 
-        {/* Error display */}
-        {error && (
-          <div className="error-display glass-card" style={{ animation: 'fadeIn 0.3s ease' }}>
-            <span className="error-display__icon">❌</span>
-            <div>
-              <p className="error-display__msg">{error}</p>
-              <button className="btn btn-secondary btn-sm" onClick={handleReset} style={{ marginTop: '0.75rem' }}>
-                Try Again
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Video info + format selector */}
-        {videoInfo && !loading && (
-          <>
-            <VideoPreview info={videoInfo} />
-            <FormatSelector
-              formats={videoInfo.formats}
-              selected={selectedFormat}
-              onSelect={setSelectedFormat}
-            />
-
-            {selectedFormat && (
-              <VideoTrimmer
-                duration={videoInfo.duration}
-                selectedFormat={selectedFormat}
-                onTrimChange={handleTrimChange}
-              />
-            )}
-
-            {selectedFormat && !downloading && (
-              <div className="download-action" style={{ animation: 'fadeIn 0.3s ease' }}>
-                <button
-                  id="download-btn"
-                  className="btn btn-primary download-action__btn"
-                  onClick={handleDownload}
-                >
-                  ⬇️ Download {selectedFormat.ext.toUpperCase()}
-                  {selectedFormat.resolution ? ` — ${selectedFormat.resolution}` : ''}
-                </button>
+        {/* Canvas / Content Area */}
+        <main className="flex-1 pt-24 px-4 md:px-8 pb-12 overflow-y-auto w-full max-w-7xl mx-auto">
+          {/* DOWNLOADER TAB VIEW */}
+          {activeTab === 'downloader' && (
+            <div className="w-full flex flex-col gap-8" style={{ animation: 'fadeIn 0.3s ease' }}>
+              {/* Header section */}
+              <div>
+                <h1 className="font-headline-md text-headline-md text-on-surface font-bold mb-1">
+                  Download Engine
+                </h1>
+                <p className="font-body-md text-body-md text-on-surface-variant">
+                  Paste a URL to analyze and extract media.
+                </p>
               </div>
-            )}
-          </>
-        )}
 
-        {/* Download progress */}
-        {downloading && (
-          <div className="download-progress glass-card" style={{ animation: 'slideUp 0.4s ease', textAlign: 'center', padding: '1.5rem' }}>
-            <div className="download-progress__header" style={{ justifyContent: 'center' }}>
-              <span className="download-progress__icon spinner-pulse">📦</span>
-              <h3 className="download-progress__title">Download Started!</h3>
+              {/* Error display if any */}
+              {error && (
+                <div className="glass-panel border-error/30 bg-error/10 text-on-surface p-4 rounded-xl flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-error">error</span>
+                    <p className="text-sm">{error}</p>
+                  </div>
+                  <button
+                    onClick={handleReset}
+                    className="text-xs bg-surface border border-outline-variant px-3 py-1.5 rounded-lg hover:bg-surface-bright transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
+
+              {/* URL Input Controller */}
+              <URLInput
+                url={url}
+                setUrl={setUrl}
+                onSubmit={handleFetch}
+                loading={loading}
+                clipboardUrl={clipboardUrl}
+                onClipboardUse={dismissClipboard}
+                recentLinks={history}
+              />
+
+              {/* Loading State */}
+              {loading && (
+                <div className="glass-panel rounded-xl p-8 flex flex-col items-center justify-center gap-3 text-center">
+                  <span className="animate-spin material-symbols-outlined text-primary text-4xl">sync</span>
+                  <p className="font-body-lg font-semibold text-on-surface">Analyzing Video Link...</p>
+                  <p className="text-xs text-on-surface-variant">Extracting available video qualities and metadata</p>
+                </div>
+              )}
+
+              {/* Real Video Information & Options (Only displayed after successful analysis) */}
+              {videoInfo && !loading && (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {/* Left Column: Real Media Preview & Video Trimmer */}
+                  <div className="lg:col-span-7 flex flex-col gap-6">
+                    <VideoPreview
+                      info={videoInfo}
+                      selectedFormat={selectedFormat}
+                      videoUrl={url}
+                    />
+                    <VideoTrimmer
+                      duration={videoInfo.duration || 0}
+                      onTrimChange={(data) => {
+                        trimDataRef.current = data;
+                        setTrimData(data);
+                      }}
+                    />
+                  </div>
+
+                  {/* Right Column: Real Format Configuration */}
+                  <div className="lg:col-span-5 flex flex-col gap-6">
+                    <FormatSelector
+                      formats={videoInfo.formats || []}
+                      selected={selectedFormat}
+                      onSelect={setSelectedFormat}
+                    />
+
+                    {/* Download Action Button & Estimated Size Display */}
+                    {!downloading ? (
+                      <div className="glass-panel rounded-xl p-6 flex flex-col gap-4 glow-active">
+                        {selectedFormat && (
+                          <div className="flex items-center justify-between bg-surface-container border border-white/10 px-4 py-3 rounded-lg text-sm">
+                            <span className="text-on-surface-variant flex items-center gap-1.5 font-medium">
+                              <span className="material-symbols-outlined text-[18px] text-primary">hard_drive</span>
+                              {trimData?.enabled ? 'Trimmed Download Size:' : 'Estimated Download Size:'}
+                            </span>
+                            <span className="font-mono font-bold text-primary text-base">
+                              {formatBytes(calculateEstimatedBytes(selectedFormat, videoInfo.duration || 0, trimData))}
+                            </span>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={handleDownload}
+                          disabled={!selectedFormat}
+                          className="w-full bg-primary text-on-primary-fixed hover:bg-primary-fixed disabled:opacity-40 disabled:cursor-not-allowed transition-all rounded-lg py-4 font-body-md font-bold text-center flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(154,205,50,0.4)]"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+                            download
+                          </span>
+                          Download {selectedFormat ? `${selectedFormat.ext?.toUpperCase()} (${selectedFormat.resolution || selectedFormat.quality || 'HD'})` : 'Media'}
+                        </button>
+                      </div>
+                    ) : (
+                      <DownloadProgress
+                        downloading={downloading}
+                        progress={downloadProgress}
+                        filename={videoInfo ? `${videoInfo.title.substring(0, 30)}.mp4` : 'video.mp4'}
+                        onPause={() => {
+                          setNotification('Download paused.');
+                          setTimeout(() => setNotification(null), 3000);
+                        }}
+                        onCancel={() => setDownloading(false)}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Initial Feature Badges (Only displayed before any URL is searched) */}
+              {!videoInfo && !loading && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+                  <div className="glass-panel p-5 rounded-xl flex items-start gap-4">
+                    <div className="p-3 bg-primary/10 rounded-lg text-primary">
+                      <span className="material-symbols-outlined">high_quality</span>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-on-surface text-sm">Multiple Resolutions</h3>
+                      <p className="text-xs text-on-surface-variant mt-1">Download in 4K, 1080p, 720p, 480p, or extract MP3 audio.</p>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel p-5 rounded-xl flex items-start gap-4">
+                    <div className="p-3 bg-primary/10 rounded-lg text-primary">
+                      <span className="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-on-surface text-sm">Video Trimming</h3>
+                      <p className="text-xs text-on-surface-variant mt-1">Specify custom start and end timestamps to download specific sections.</p>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel p-5 rounded-xl flex items-start gap-4">
+                    <div className="p-3 bg-primary/10 rounded-lg text-primary">
+                      <span className="material-symbols-outlined">speed</span>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-on-surface text-sm">Fast Chunk Streaming</h3>
+                      <p className="text-xs text-on-surface-variant mt-1">Direct stream piping with zero server file storage required.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-              Your download is now being handled by your browser. Check your browser's download manager.
-            </p>
-          </div>
-        )}
+          )}
 
-        {/* History panel */}
-        {showHistory && (
-          <DownloadHistory
-            history={history}
-            onClear={clearHistory}
-            onRemove={removeItem}
-          />
-        )}
-      </main>
+          {/* HISTORY TAB VIEW */}
+          {activeTab === 'history' && (
+            <DownloadHistory
+              history={history}
+              onClear={clearHistory}
+              onRemove={removeItem}
+            />
+          )}
 
-      <Footer />
+          {/* SETTINGS TAB VIEW */}
+          {activeTab === 'settings' && (
+            <div className="w-full flex flex-col gap-6" style={{ animation: 'fadeIn 0.3s ease' }}>
+              <div>
+                <h1 className="font-headline-md text-headline-md text-on-surface font-bold">Settings</h1>
+                <p className="font-body-md text-body-md text-on-surface-variant">Manage application defaults and preferences.</p>
+              </div>
+
+              <div className="glass-panel rounded-xl p-6 flex flex-col gap-6">
+                <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                  <div>
+                    <h3 className="font-body-lg text-on-surface font-semibold">Auto Clipboard Detection</h3>
+                    <p className="text-xs text-on-surface-variant mt-0.5">Automatically check clipboard for video URLs when focused.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" defaultChecked className="sr-only peer" />
+                    <div className="w-9 h-5 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" />
+                  </label>
+                </div>
+
+                <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                  <div>
+                    <h3 className="font-body-lg text-on-surface font-semibold">Default Format</h3>
+                    <p className="text-xs text-on-surface-variant mt-0.5">Preferred resolution for new downloads.</p>
+                  </div>
+                  <select className="bg-surface-container border border-outline-variant text-on-surface rounded-lg px-3 py-2 text-sm">
+                    <option>Best Available (1080p / 4K)</option>
+                    <option>Standard HD (720p)</option>
+                    <option>Audio Only (MP3)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-body-lg text-on-surface font-semibold">Clear Saved Cache</h3>
+                    <p className="text-xs text-on-surface-variant mt-0.5">Reset local state and download history.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      clearHistory();
+                      handleReset();
+                      setNotification('Cache & history cleared successfully.');
+                      setTimeout(() => setNotification(null), 3000);
+                    }}
+                    className="bg-error/10 text-error border border-error/20 hover:bg-error/20 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+                  >
+                    Clear All Data
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

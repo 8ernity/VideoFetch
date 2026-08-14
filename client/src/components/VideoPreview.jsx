@@ -1,124 +1,125 @@
-import { useState } from 'react';
-import { formatNumber, formatDate } from '../utils/formatters';
-import { getStreamUrl } from '../utils/api';
+import React, { useState } from 'react';
+import { formatDuration, formatViews, decodeHtmlEntities } from '../utils/formatters';
 
-/**
- * Extract YouTube Video ID from a standard/short/embed URL.
- */
-function getYouTubeId(url) {
-  if (!url) return null;
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
-}
-
-/**
- * Video metadata preview — thumbnail/poster, title, uploader, duration, views.
- * Supports interactive inline video play/preview.
- */
-export default function VideoPreview({ info }) {
+export default function VideoPreview({ info, selectedFormat, videoUrl }) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [activeUrl, setActiveUrl] = useState(info?.webpage_url);
+  const [imgError, setImgError] = useState(false);
 
   if (!info) return null;
 
-  // Reset play state if url changes
-  if (info.webpage_url !== activeUrl) {
-    setActiveUrl(info.webpage_url);
-    setIsPlaying(false);
-  }
+  const titleStr = decodeHtmlEntities(info.title);
+  const durationStr = formatDuration(info.duration);
+  const viewsStr = formatViews(info.view_count);
 
-  const isYouTube = info.extractor?.toLowerCase().includes('youtube') || 
-                    info.webpage_url?.includes('youtube.com') || 
-                    info.webpage_url?.includes('youtu.be');
-  
-  const ytId = isYouTube ? getYouTubeId(info.webpage_url) : null;
-  
-  const previewFormat = info.formats?.find(f => f.resolution === '480p') ||
-                        info.formats?.find(f => f.resolution === '360p') ||
-                        info.formats?.[0];
-                        
-  const streamUrl = (!isYouTube && previewFormat) 
-    ? getStreamUrl(info.webpage_url, previewFormat.format_id, previewFormat.type)
+  // Construct backend proxy URLs
+  const proxiedThumbnail = info.thumbnail
+    ? `/api/video/thumbnail?url=${encodeURIComponent(info.thumbnail)}`
     : null;
 
-  const hasPreview = isYouTube ? !!ytId : !!streamUrl;
+  const streamFormatId = selectedFormat ? selectedFormat.format_id : info.formats && info.formats[0] ? info.formats[0].format_id : 'best';
+  const proxiedStreamUrl = videoUrl
+    ? `/api/video/stream?url=${encodeURIComponent(videoUrl)}&format_id=${encodeURIComponent(streamFormatId)}`
+    : null;
 
   return (
-    <section className="video-preview glass-card" style={{ animation: 'slideUp 0.5s ease' }}>
-      <div className="video-preview__layout">
-        {(info.thumbnail || hasPreview) && (
-          <div className="video-preview__thumb-wrapper">
-            {isPlaying && hasPreview ? (
-              isYouTube ? (
-                <iframe
-                  src={`https://www.youtube.com/embed/${ytId}?autoplay=1`}
-                  title="YouTube video preview"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                  className="video-preview__player"
-                />
-              ) : (
-                <video
-                  src={streamUrl}
-                  controls
-                  autoPlay
-                  className="video-preview__player"
-                  poster={info.thumbnail}
-                />
-              )
+    <div className="glass-panel rounded-xl overflow-hidden flex flex-col border border-white/10 glow-active">
+      {/* Video Player / Thumbnail Area */}
+      <div className="relative aspect-video bg-black flex items-center justify-center group overflow-hidden">
+        {isPlaying ? (
+          info.embed_url ? (
+            <iframe
+              src={info.embed_url}
+              title={titleStr}
+              className="w-full h-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          ) : (
+            <video
+              controls
+              autoPlay
+              preload="auto"
+              playsInline
+              src={proxiedStreamUrl}
+              className="w-full h-full object-contain bg-black"
+            >
+              Your browser does not support HTML5 video playback.
+            </video>
+          )
+        ) : (
+          <>
+            {/* Thumbnail Display */}
+            {!imgError && proxiedThumbnail ? (
+              <img
+                src={proxiedThumbnail}
+                alt={titleStr}
+                onError={(e) => {
+                  if (e.target.src !== info.thumbnail) {
+                    e.target.src = info.thumbnail;
+                  } else {
+                    setImgError(true);
+                  }
+                }}
+                className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-95 transition-opacity duration-300"
+              />
             ) : (
-              <>
-                {info.thumbnail ? (
-                  <img
-                    src={info.thumbnail}
-                    alt={info.title}
-                    className="video-preview__thumb"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="video-preview__thumb" style={{ background: '#0e0e1e', aspectRatio: '16/9' }} />
-                )}
-                
-                {info.duration_label && (
-                  <span className="video-preview__duration">{info.duration_label}</span>
-                )}
-                
-                {hasPreview && (
-                  <div className="video-preview__play-overlay" onClick={() => setIsPlaying(true)}>
-                    <button className="video-preview__play-btn" aria-label="Play Preview">
-                      ▶
-                    </button>
-                  </div>
-                )}
-              </>
+              <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-surface-container-high via-surface-container to-surface-container-lowest flex items-center justify-center">
+                <span className="material-symbols-outlined text-6xl text-primary/40">play_circle</span>
+              </div>
             )}
-          </div>
+
+            {/* Player Controls Overlay */}
+            <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none">
+              {/* Duration Badge */}
+              <div className="flex justify-end">
+                {durationStr && (
+                  <span className="bg-black/70 backdrop-blur-sm text-white font-label-sm text-label-sm px-2.5 py-1 rounded-md font-mono">
+                    {durationStr}
+                  </span>
+                )}
+              </div>
+
+              {/* Play Button */}
+              <div className="flex items-center justify-center h-full pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsPlaying(true)}
+                  className="w-16 h-16 rounded-full bg-primary text-on-primary-fixed flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-[0_0_25px_rgba(154,205,50,0.5)]"
+                  title="Play Video"
+                >
+                  <span className="material-symbols-outlined text-[34px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    play_arrow
+                  </span>
+                </button>
+              </div>
+            </div>
+          </>
         )}
-        <div className="video-preview__info">
-          <h2 className="video-preview__title">{info.title}</h2>
-          <div className="video-preview__meta">
-            {info.uploader && (
-              <span className="video-preview__meta-item">
-                👤 {info.uploader}
-              </span>
-            )}
-            {info.view_count != null && (
-              <span className="video-preview__meta-item">
-                👁️ {formatNumber(info.view_count)} views
-              </span>
-            )}
-            {info.upload_date && (
-              <span className="video-preview__meta-item">
-                📅 {formatDate(info.upload_date)}
-              </span>
-            )}
-            {info.extractor && (
-              <span className="badge badge-purple">{info.extractor}</span>
-            )}
-          </div>
+      </div>
+
+      {/* Metadata Info */}
+      <div className="p-5 flex flex-col gap-2">
+        <h3 className="font-body-lg text-body-lg text-on-surface font-semibold line-clamp-1">
+          {titleStr}
+        </h3>
+        <div className="flex flex-wrap items-center gap-4 font-label-sm text-label-sm text-on-surface-variant">
+          {info.uploader && (
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px]">person</span> {info.uploader}
+            </span>
+          )}
+          {viewsStr && viewsStr !== '—' && (
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px]">visibility</span> {viewsStr} views
+            </span>
+          )}
+          {info.upload_date && (
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px]">calendar_today</span> {info.upload_date}
+            </span>
+          )}
         </div>
       </div>
-    </section>
+    </div>
   );
 }
