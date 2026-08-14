@@ -7,8 +7,10 @@ import FormatSelector from './components/FormatSelector';
 import VideoTrimmer from './components/VideoTrimmer';
 import DownloadProgress from './components/DownloadProgress';
 import DownloadHistory from './components/DownloadHistory';
+import Settings from './components/Settings';
 import { useClipboard } from './hooks/useClipboard';
 import { useDownloadHistory } from './hooks/useDownloadHistory';
+import { useAppSettings } from './hooks/useAppSettings';
 import { fetchVideoInfo, getDownloadUrl } from './utils/api';
 import { calculateEstimatedBytes, formatBytes } from './utils/formatters';
 
@@ -30,6 +32,7 @@ export default function App() {
 
   const { clipboardUrl, dismiss: dismissClipboard } = useClipboard();
   const { history, addToHistory, clearHistory, removeItem } = useDownloadHistory();
+  const { settings, updateSetting, resetSettings } = useAppSettings();
 
   /* Fetch real video metadata from backend API */
   const handleFetch = useCallback(async () => {
@@ -314,55 +317,17 @@ export default function App() {
 
           {/* SETTINGS TAB VIEW */}
           {activeTab === 'settings' && (
-            <div className="w-full flex flex-col gap-6" style={{ animation: 'fadeIn 0.3s ease' }}>
-              <div>
-                <h1 className="font-headline-md text-headline-md text-on-surface font-bold">Settings</h1>
-                <p className="font-body-md text-body-md text-on-surface-variant">Manage application defaults and preferences.</p>
-              </div>
-
-              <div className="glass-panel rounded-xl p-6 flex flex-col gap-6">
-                <div className="flex items-center justify-between border-b border-white/5 pb-4">
-                  <div>
-                    <h3 className="font-body-lg text-on-surface font-semibold">Auto Clipboard Detection</h3>
-                    <p className="text-xs text-on-surface-variant mt-0.5">Automatically check clipboard for video URLs when focused.</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" defaultChecked className="sr-only peer" />
-                    <div className="w-9 h-5 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" />
-                  </label>
-                </div>
-
-                <div className="flex items-center justify-between border-b border-white/5 pb-4">
-                  <div>
-                    <h3 className="font-body-lg text-on-surface font-semibold">Default Format</h3>
-                    <p className="text-xs text-on-surface-variant mt-0.5">Preferred resolution for new downloads.</p>
-                  </div>
-                  <select className="bg-surface-container border border-outline-variant text-on-surface rounded-lg px-3 py-2 text-sm">
-                    <option>Best Available (1080p / 4K)</option>
-                    <option>Standard HD (720p)</option>
-                    <option>Audio Only (MP3)</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-body-lg text-on-surface font-semibold">Clear Saved Cache</h3>
-                    <p className="text-xs text-on-surface-variant mt-0.5">Reset local state and download history.</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      clearHistory();
-                      handleReset();
-                      setNotification('Cache & history cleared successfully.');
-                      setTimeout(() => setNotification(null), 3000);
-                    }}
-                    className="bg-error/10 text-error border border-error/20 hover:bg-error/20 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
-                  >
-                    Clear All Data
-                  </button>
-                </div>
-              </div>
-            </div>
+            <Settings
+              settings={settings}
+              updateSetting={updateSetting}
+              resetSettings={resetSettings}
+              onClearAllData={() => {
+                clearHistory();
+                handleReset();
+                setNotification('All settings, history, and cache reset successfully.');
+                setTimeout(() => setNotification(null), 3000);
+              }}
+            />
           )}
         </main>
       </div>

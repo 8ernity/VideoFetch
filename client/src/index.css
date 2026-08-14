@@ -1,10 +1,50 @@
 /* =====================================================
-   VideoFetch — Obsidian Theme Global CSS
-   Pitch black background · Glassmorphism · Lime accents
+   VideoFetch — Dynamic Theme Global CSS
+   Pitch black background · Glassmorphism · Multi-Accent
    ===================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+
+:root {
+  --primary-color: #b5ea4d;
+  --primary-container: #9acd32;
+  --primary-rgb: 181, 234, 77;
+  --glow-color: rgba(181, 234, 77, 0.25);
+  --on-primary: #1b2e00;
+}
+
+:root[data-theme='lime'] {
+  --primary-color: #b5ea4d;
+  --primary-container: #9acd32;
+  --primary-rgb: 181, 234, 77;
+  --glow-color: rgba(181, 234, 77, 0.25);
+  --on-primary: #1b2e00;
+}
+
+:root[data-theme='cyan'] {
+  --primary-color: #00f0ff;
+  --primary-container: #00b4d8;
+  --primary-rgb: 0, 240, 255;
+  --glow-color: rgba(0, 240, 255, 0.25);
+  --on-primary: #002b36;
+}
+
+:root[data-theme='purple'] {
+  --primary-color: #c084fc;
+  --primary-container: #9333ea;
+  --primary-rgb: 192, 132, 252;
+  --glow-color: rgba(192, 132, 252, 0.25);
+  --on-primary: #2e1065;
+}
+
+:root[data-theme='orange'] {
+  --primary-color: #fb923c;
+  --primary-container: #ea580c;
+  --primary-rgb: 251, 146, 60;
+  --glow-color: rgba(251, 146, 60, 0.25);
+  --on-primary: #431407;
+}
 
 body {
   background-color: #000000;
@@ -22,9 +62,60 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
+/* Dynamic Primary Color Overrides across all Tailwind classes */
+.text-primary {
+  color: var(--primary-color) !important;
+}
+
+.bg-primary {
+  background-color: var(--primary-color) !important;
+}
+
+.bg-primary-container {
+  background-color: var(--primary-container) !important;
+}
+
+.text-on-primary-container {
+  color: var(--on-primary) !important;
+}
+
+.text-on-primary-fixed {
+  color: var(--on-primary) !important;
+}
+
+.border-primary {
+  border-color: var(--primary-color) !important;
+}
+
+.bg-primary\/10 {
+  background-color: rgba(var(--primary-rgb), 0.1) !important;
+}
+
+.bg-primary\/20 {
+  background-color: rgba(var(--primary-rgb), 0.2) !important;
+}
+
+.border-primary\/30 {
+  border-color: rgba(var(--primary-rgb), 0.3) !important;
+}
+
+/* Toggle Switches & Peer Checked Overrides */
+.peer:checked ~ .peer-checked\:bg-primary,
+.peer:checked + .peer-checked\:bg-primary,
+.peer-checked\:bg-primary:peer-checked {
+  background-color: var(--primary-color) !important;
+}
+
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  background-color: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+  color: var(--primary-color) !important;
+}
+
 .glow-active {
-  box-shadow: inset 0 0 20px rgba(154, 205, 50, 0.12);
-  border: 1px solid rgba(154, 205, 50, 0.35);
+  box-shadow: inset 0 0 20px var(--glow-color) !important;
+  border: 1px solid rgba(var(--primary-rgb), 0.35) !important;
 }
 
 /* Custom Scrollbar */
