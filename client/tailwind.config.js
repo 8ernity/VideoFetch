@@ -1,0 +1,80 @@
+import forms from '@tailwindcss/forms';
+
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    './index.html',
+    './src/**/*.{js,ts,jsx,tsx}',
+  ],
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        'secondary-fixed': '#e5e2e1',
+        'surface-container-highest': '#24281d',
+        'secondary-container': '#3a3c35',
+        'tertiary': '#ffc7fc',
+        'on-primary': '#243600',
+        'surface': '#000000',
+        'error': '#ffb4ab',
+        'background': '#000000',
+        'on-tertiary-fixed-variant': '#751e7e',
+        'on-error': '#690005',
+        'on-tertiary': '#590062',
+        'primary-fixed-dim': '#a3d73c',
+        'on-primary-container': '#3a5400',
+        'error-container': '#93000a',
+        'on-error-container': '#ffdad6',
+        'surface-variant': '#22251a',
+        'on-background': '#e1e4d3',
+        'on-tertiary-container': '#7b2484',
+        'inverse-primary': '#496800',
+        'secondary-fixed-dim': '#c8c6c5',
+        'on-tertiary-fixed': '#36003d',
+        'outline': '#8d937d',
+        'on-primary-fixed': '#131f00',
+        'secondary': '#c8c6c5',
+        'on-surface-variant': '#c3c9b1',
+        'primary-container': '#9acd32',
+        'surface-container-lowest': '#000000',
+        'primary-fixed': '#bef456',
+        'surface-dim': '#000000',
+        'outline-variant': '#323728',
+        'on-surface': '#e1e4d3',
+        'surface-bright': '#2d3224',
+        'primary': '#b5ea4d',
+        'on-primary-fixed-variant': '#364e00',
+        'surface-container-high': '#1a1e13',
+        'tertiary-fixed-dim': '#fea9ff',
+        'surface-container-low': '#090c05',
+        'surface-container': '#0e1107',
+        'inverse-surface': '#e1e4d3',
+        'tertiary-container': '#fc99ff',
+        'on-secondary-fixed-variant': '#474746',
+        'inverse-on-surface': '#2e3226',
+        'on-secondary': '#303030',
+        'on-secondary-fixed': '#1b1b1c',
+        'surface-tint': '#a3d73c',
+        'tertiary-fixed': '#ffd6fb',
+        'on-secondary-container': '#b7b5b4'
+      },
+      fontFamily: {
+        'body-md': ['Hanken Grotesk', 'sans-serif'],
+        'body-lg': ['Hanken Grotesk', 'sans-serif'],
+        'display-lg': ['Hanken Grotesk', 'sans-serif'],
+        'label-sm': ['Hanken Grotesk', 'sans-serif'],
+        'headline-md': ['Hanken Grotesk', 'sans-serif'],
+        'headline-md-mobile': ['Hanken Grotesk', 'sans-serif']
+      },
+      fontSize: {
+        'body-md': ['16px', { lineHeight: '24px', fontWeight: '400' }],
+        'body-lg': ['18px', { lineHeight: '28px', fontWeight: '400' }],
+        'display-lg': ['48px', { lineHeight: '56px', letterSpacing: '-0.02em', fontWeight: '700' }],
+        'label-sm': ['12px', { lineHeight: '16px', letterSpacing: '0.05em', fontWeight: '500' }],
+        'headline-md': ['24px', { lineHeight: '32px', fontWeight: '600' }],
+        'headline-md-mobile': ['20px', { lineHeight: '28px', fontWeight: '600' }]
+      }
+    },
+  },
+  plugins: [forms],
+};

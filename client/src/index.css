@@ -1,10 +1,57 @@
-/* =====================================================
-   VideoFetch — Dynamic Theme Global CSS
-   Pitch black background · Glassmorphism · Multi-Accent
-   ===================================================== */
+@import "tailwindcss";
 
 @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+
+@theme {
+  --color-secondary-fixed: #e5e2e1;
+  --color-surface-container-highest: #24281d;
+  --color-secondary-container: #3a3c35;
+  --color-tertiary: #ffc7fc;
+  --color-on-primary: #243600;
+  --color-surface: #000000;
+  --color-error: #ffb4ab;
+  --color-background: #000000;
+  --color-on-tertiary-fixed-variant: #751e7e;
+  --color-on-error: #690005;
+  --color-on-tertiary: #590062;
+  --color-primary-fixed-dim: #a3d73c;
+  --color-on-primary-container: #3a5400;
+  --color-error-container: #93000a;
+  --color-on-error-container: #ffdad6;
+  --color-surface-variant: #22251a;
+  --color-on-background: #e1e4d3;
+  --color-on-tertiary-container: #7b2484;
+  --color-inverse-primary: #496800;
+  --color-secondary-fixed-dim: #c8c6c5;
+  --color-on-tertiary-fixed: #36003d;
+  --color-outline: #8d937d;
+  --color-on-primary-fixed: #131f00;
+  --color-secondary: #c8c6c5;
+  --color-on-surface-variant: #c3c9b1;
+  --color-primary-container: #9acd32;
+  --color-surface-container-lowest: #000000;
+  --color-primary-fixed: #bef456;
+  --color-surface-dim: #000000;
+  --color-outline-variant: #323728;
+  --color-on-surface: #e1e4d3;
+  --color-surface-bright: #2d3224;
+  --color-primary: #b5ea4d;
+  --color-on-primary-fixed-variant: #364e00;
+  --color-surface-container-high: #1a1e13;
+  --color-tertiary-fixed-dim: #fea9ff;
+  --color-surface-container-low: #090c05;
+  --color-surface-container: #0e1107;
+  --color-inverse-surface: #e1e4d3;
+  --color-tertiary-container: #fc99ff;
+  --color-on-secondary-fixed-variant: #474746;
+  --color-inverse-on-surface: #2e3226;
+  --color-on-secondary: #303030;
+  --color-on-secondary-fixed: #1b1b1c;
+  --color-surface-tint: #a3d73c;
+  --color-tertiary-fixed: #ffd6fb;
+  --color-on-secondary-container: #b7b5b4;
+}
 
 :root {
   --primary-color: #b5ea4d;
@@ -99,10 +146,9 @@ body {
   border-color: rgba(var(--primary-rgb), 0.3) !important;
 }
 
-/* Toggle Switches & Peer Checked Overrides */
-.peer:checked ~ .peer-checked\:bg-primary,
-.peer:checked + .peer-checked\:bg-primary,
-.peer-checked\:bg-primary:peer-checked {
+/* Toggle Switches & Radio Input Overrides */
+input:checked + div,
+input:checked ~ div {
   background-color: var(--primary-color) !important;
 }
 
@@ -134,12 +180,10 @@ input[type="radio"]:checked {
   background: #3a3c35;
 }
 
-/* Material Symbols Adjustments */
 .material-symbols-outlined {
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* Line Clamp helper */
 .line-clamp-1 {
   display: -webkit-box;
   -webkit-line-clamp: 1;
