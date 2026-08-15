@@ -302,12 +302,31 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
     
     let hasError = false;
     let ytError = '';
+    let needsPostTrim = false;
 
     // 1. Prepare download arguments
     const isDirectUrl = targetFormat.startsWith('custom_direct_url|');
+    const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
     
-    if (!isDirectUrl && !isAudioOnly && (url.includes('youtube.com') || url.includes('youtu.be')) && !targetFormat.includes('+')) {
-      targetFormat = `${targetFormat}+bestaudio[ext=m4a]/bestaudio/best`;
+    if (!isDirectUrl && !isAudioOnly && isYouTube && !targetFormat.includes('+')) {
+      // For YouTube: use height-based format selection to guarantee H.264 video + AAC audio.
+      // Raw format IDs (e.g. '137') are video-only and can't have [vcodec] filters appended.
+      // Instead, detect the height from the format ID and request a proper merged stream.
+      const ytFormatHeights = {
+        '137': 1080, '299': 1080, '399': 1080, '614': 1080,
+        '136': 720,  '298': 720,  '398': 720,
+        '135': 480,  '397': 480,
+        '134': 360,  '396': 360,
+        '133': 240,  '395': 240,
+        '160': 144,  '394': 144,
+        '18': 360,   '22': 720,
+      };
+      const height = ytFormatHeights[targetFormat] || null;
+      if (height) {
+        targetFormat = `bestvideo[height<=${height}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
+      } else if (targetFormat === 'best') {
+        targetFormat = `bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo+bestaudio/best`;
+      }
     }
 
     // Determine if we can stream directly to stdout on-the-fly
@@ -475,6 +494,8 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
       const ytArgs = [
         ...getBaseArgs(url, { useProxy }),
         '-f', targetFormat,
+        '--concurrent-fragments', '4',
+        '--fragment-retries', '10',
         '--no-part',
         '-o', tempFile,
         '--ffmpeg-location', FFMPEG_PATH
@@ -483,15 +504,25 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
       if (isAudioOnly) {
         ytArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '5');
       } else {
-        ytArgs.push('--remux-video', 'mp4');
+        // Merge video+audio into MP4 container (no slow re-encoding needed since we request H.264)
+        ytArgs.push('--merge-output-format', 'mp4');
       }
 
-      if (opts && opts.start != null && opts.end != null) {
+      // For merge formats (video+audio with '+'), --download-sections causes ffmpeg to
+      // access YouTube CDN URLs directly which returns 403. Instead, download full video
+      // then trim with ffmpeg locally as a post-processing step.
+      const hasTrim = opts && opts.start != null && opts.end != null;
+      const isMergeFormat = targetFormat.includes('+');
+      needsPostTrim = hasTrim && isMergeFormat;
+
+      if (hasTrim && !isMergeFormat) {
+        // Single-stream format: --download-sections works directly
         const start = formatSeconds(opts.start);
         const end = formatSeconds(opts.end);
         ytArgs.push('--download-sections', `*${start}-${end}`);
         ytArgs.push('--force-keyframes-at-cuts');
       }
+      // If needsPostTrim is true, we download the full video first and trim after
       
       ytArgs.push(url);
       ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -512,6 +543,37 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
 
       if (!fs.existsSync(tempFile)) {
         return reject(new Error('Download completed but output file is missing.'));
+      }
+
+      // Post-download trim for merge format downloads (avoids YouTube CDN 403 with --download-sections)
+      if (needsPostTrim) {
+        const trimmedFile = tempFile.replace(/(\.\w+)$/, '_trimmed$1');
+        const startTime = formatSeconds(opts.start);
+        const duration = formatSeconds(opts.end - opts.start);
+        const ffArgs = ['-ss', startTime, '-i', tempFile, '-t', duration, '-c', 'copy', '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart', '-y', trimmedFile];
+        console.log(`[Process] Post-trim: ${startTime} → ${formatSeconds(opts.end)} (${duration}s)`);
+        
+        try {
+          await new Promise((resolveFF, rejectFF) => {
+            const ffProc = spawn(FFMPEG_PATH, ffArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
+            let ffError = '';
+            ffProc.stderr.on('data', (d) => { ffError += d.toString(); });
+            ffProc.on('close', (ffCode) => {
+              if (ffCode !== 0) rejectFF(new Error(`FFmpeg trim failed (code ${ffCode}): ${ffError.substring(0, 300)}`));
+              else resolveFF();
+            });
+            ffProc.on('error', rejectFF);
+          });
+          // Replace original with trimmed version
+          if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+          fs.renameSync(trimmedFile, tempFile);
+          console.log(`[Process] Post-trim complete: ${tempFile}`);
+        } catch (trimErr) {
+          console.error('[Process] Post-trim failed:', trimErr.message);
+          if (fs.existsSync(trimmedFile)) try { fs.unlinkSync(trimmedFile); } catch {}
+          if (fs.existsSync(tempFile)) try { fs.unlinkSync(tempFile); } catch {}
+          return reject(trimErr);
+        }
       }
 
       // 2. Stream the completed file
@@ -775,16 +837,15 @@ function formatInfo(raw) {
         manifest_url: f.manifest_url,
         http_headers: f.http_headers,
         cookies: f.cookies,
-        // Set 'mp3' extension for audio-only downloads; keep 'mp4' for videos
         ext: isAudioOnly ? 'mp3' : 'mp4',
         quality: f.format_note || f.quality || 'Unknown',
+        height: f.height || null,
         resolution: f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : null),
         fps: f.fps || null,
         filesize: f.filesize || f.filesize_approx || null,
         filesize_label: formatBytes(f.filesize || f.filesize_approx),
         vcodec: f.vcodec !== 'none' ? f.vcodec : null,
         acodec: f.acodec !== 'none' ? f.acodec : null,
-        // Treat all video streams as 'video+audio' because our backend will merge audio automatically
         type: f.vcodec !== 'none'
           ? 'video+audio'
           : 'audio-only',
@@ -811,8 +872,18 @@ function deduplicateFormats(formats) {
   const seen = new Map();
   for (const f of formats) {
     const key = `${f.ext}-${f.resolution || f.quality}-${f.type}`;
-    if (!seen.has(key) || (f.filesize && f.filesize > (seen.get(key).filesize || 0))) {
+    const existing = seen.get(key);
+    if (!existing) {
       seen.set(key, f);
+    } else {
+      // Prefer H.264 (avc1) over VP9/AV1 for universal device compatibility
+      const existingIsH264 = existing.vcodec && existing.vcodec.startsWith('avc1');
+      const newIsH264 = f.vcodec && f.vcodec.startsWith('avc1');
+      if (newIsH264 && !existingIsH264) {
+        seen.set(key, f);
+      } else if (!existingIsH264 && !newIsH264 && f.filesize && f.filesize > (existing.filesize || 0)) {
+        seen.set(key, f);
+      }
     }
   }
   const arr = [...seen.values()];

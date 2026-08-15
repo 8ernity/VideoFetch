@@ -11,7 +11,6 @@ export default function VideoPreview({ info, selectedFormat, videoUrl }) {
   const durationStr = formatDuration(info.duration);
   const viewsStr = formatViews(info.view_count);
 
-  // Construct backend proxy URLs
   const proxiedThumbnail = info.thumbnail
     ? `/api/video/thumbnail?url=${encodeURIComponent(info.thumbnail)}`
     : null;
@@ -26,26 +25,16 @@ export default function VideoPreview({ info, selectedFormat, videoUrl }) {
       {/* Video Player / Thumbnail Area */}
       <div className="relative aspect-video bg-black flex items-center justify-center group overflow-hidden">
         {isPlaying ? (
-          info.embed_url ? (
-            <iframe
-              src={info.embed_url}
-              title={titleStr}
-              className="w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
-          ) : (
-            <video
-              controls
-              autoPlay
-              preload="auto"
-              playsInline
-              src={proxiedStreamUrl}
-              className="w-full h-full object-contain bg-black"
-            >
-              Your browser does not support HTML5 video playback.
-            </video>
-          )
+          <video
+            controls
+            autoPlay
+            preload="auto"
+            playsInline
+            src={proxiedStreamUrl}
+            className="w-full h-full object-contain bg-black"
+          >
+            Your browser does not support HTML5 video playback.
+          </video>
         ) : (
           <>
             {/* Thumbnail Display */}

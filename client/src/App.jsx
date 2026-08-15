@@ -8,6 +8,7 @@ import VideoTrimmer from './components/VideoTrimmer';
 import DownloadProgress from './components/DownloadProgress';
 import DownloadHistory from './components/DownloadHistory';
 import Settings from './components/Settings';
+import Help from './components/Help';
 import { useClipboard } from './hooks/useClipboard';
 import { useDownloadHistory } from './hooks/useDownloadHistory';
 import { useAppSettings } from './hooks/useAppSettings';
@@ -328,6 +329,11 @@ export default function App() {
                 setTimeout(() => setNotification(null), 3000);
               }}
             />
+          )}
+
+          {/* HELP TAB VIEW */}
+          {activeTab === 'help' && (
+            <Help onGoToDownloader={() => setActiveTab('downloader')} />
           )}
         </main>
       </div>

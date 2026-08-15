@@ -9,7 +9,7 @@
     "install-all": "npm install && npm install --prefix server && npm install --prefix client",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
-    "dev": "npm run dev:server & npm run dev:client",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "npm install && npm install --prefix server && npm install --prefix client && npm run build --prefix client",
     "start": "node server/src/index.js"
   },
@@ -19,5 +19,8 @@
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "helmet": "^8.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }

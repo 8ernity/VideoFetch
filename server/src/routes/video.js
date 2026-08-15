@@ -134,31 +134,25 @@ router.get('/stream', validateDownloadParams, async (req, res) => {
     const rangeHeader = req.headers.range;
     const streamOpts = rangeHeader ? { range: rangeHeader } : null;
 
+    // Fast progressive stream for in-app preview player to guarantee zero black screen
+    let streamFormatId = req.formatId;
+    if (streamFormatId && (streamFormatId.includes('+') || streamFormatId === '137' || streamFormatId === '299' || streamFormatId === '399')) {
+      streamFormatId = 'best[ext=mp4]/18/best';
+    }
+
     try {
-      await streamDownload(req.videoUrl, req.formatId, req.videoType, res, setStreamHeaders, false, streamOpts);
+      await streamDownload(req.videoUrl, streamFormatId, req.videoType, res, setStreamHeaders, false, streamOpts);
     } catch (err) {
       if (err.statusCode === 403 || err.statusCode === 404) {
         console.log(`[Stream] Link expired (status ${err.statusCode}), attempting refresh for: ${req.videoUrl}`);
         try {
-          const freshInfo = await getVideoInfo(req.videoUrl);
-          const oldFormatId = req.formatId;
-          let newFormat = null;
-
-          if (oldFormatId.startsWith('custom_direct_url|')) {
-            newFormat = freshInfo.formats.find(f => f.format_id.startsWith('custom_direct_url|'));
-          } else {
-            newFormat = freshInfo.formats.find(f => f.format_id === oldFormatId) || freshInfo.formats[0];
-          }
-
-          if (newFormat) {
-            console.log(`[Stream] Found fresh link, restarting stream...`);
-            return await streamDownload(req.videoUrl, newFormat.format_id, req.videoType, res, setStreamHeaders, false, streamOpts);
-          }
+          await streamDownload(req.videoUrl, 'best[ext=mp4]/best', req.videoType, res, setStreamHeaders, false, streamOpts);
         } catch (refreshErr) {
           console.error('[Stream] Automatic refresh failed:', refreshErr.message);
         }
+      } else {
+        throw err;
       }
-      throw err;
     }
   } catch (err) {
     console.error('[/api/video/stream]', err.message);
