@@ -41,25 +41,45 @@ router.get('/thumbnail', async (req, res) => {
       return res.status(400).send('Invalid image URL');
     }
 
-    const parsed = new URL(imageUrl);
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': `${parsed.protocol}//${parsed.hostname}/`,
+    const fetchImage = (targetUrl, redirectDepth = 0) => {
+      if (redirectDepth > 5) {
+        return res.status(502).send('Too many redirects');
+      }
+
+      try {
+        const parsed = new URL(targetUrl);
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Referer': `${parsed.protocol}//${parsed.hostname}/`,
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        };
+
+        const client = targetUrl.startsWith('https') ? https : http;
+        const request = client.get(targetUrl, { headers }, (imgRes) => {
+          // Follow HTTP redirects (301, 302, 303, 307, 308)
+          if (imgRes.statusCode >= 300 && imgRes.statusCode < 400 && imgRes.headers.location) {
+            const redirectUrl = new URL(imgRes.headers.location, targetUrl).toString();
+            return fetchImage(redirectUrl, redirectDepth + 1);
+          }
+
+          if (imgRes.statusCode >= 400) {
+            return res.status(imgRes.statusCode).send('Image fetch failed');
+          }
+
+          res.setHeader('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          imgRes.pipe(res);
+        });
+
+        request.on('error', () => {
+          if (!res.headersSent) res.status(500).send('Failed to proxy image');
+        });
+      } catch (e) {
+        if (!res.headersSent) res.status(500).send(e.message);
+      }
     };
 
-    const client = imageUrl.startsWith('https') ? https : http;
-    const request = client.get(imageUrl, { headers }, (imgRes) => {
-      if (imgRes.statusCode >= 400) {
-        return res.status(imgRes.statusCode).send('Image fetch failed');
-      }
-      res.setHeader('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      imgRes.pipe(res);
-    });
-
-    request.on('error', () => {
-      if (!res.headersSent) res.status(500).send('Failed to proxy image');
-    });
+    fetchImage(imageUrl);
   } catch (err) {
     if (!res.headersSent) res.status(500).send(err.message);
   }

@@ -3,22 +3,25 @@
   <img src="./client/public/VideoFetch.png" alt="VideoFetch Banner" width="100%">
 </p>
 
-A modern, responsive web application for downloading publicly accessible videos from supported platforms. Built with **React + Vite** (frontend) and **Node.js + Express** (backend), powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+A modern, high-performance web application for downloading publicly accessible videos and audio from 1000+ supported platforms. Built with **React + Vite** (frontend) and **Node.js + Express** (backend), powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) and **FFmpeg**.
 
 ---
 
 ## Features
 
-- 🎬 **Video metadata extraction** — title, thumbnail, duration, uploader
-- 📦 **Multiple format options** — MP4, WebM, audio-only, various resolutions
-- ⬇️ **Download progress tracking** — real-time byte counter and progress bar
-- 📋 **Clipboard auto-paste** — detects video URLs on your clipboard
-- 🗂️ **Download history** — stored locally via localStorage
-- 🖱️ **Drag & drop** — drop a URL directly into the input
-- 🛡️ **DRM platform blocking** — Netflix, Disney+, etc. are blocked
-- 🚦 **Rate limiting** — prevents API abuse
-- 📱 **Mobile-friendly** — fully responsive design
-- 🌑 **Dark futuristic theme** — glassmorphism, neon accents, pitch black background
+- 🎬 **Video Metadata Extraction** — title, high-res thumbnail, duration, uploader, view count
+- 📦 **Multi-Format & Resolution** — 4K, 1080p, 720p, 480p, 360p, and MP3 audio extraction
+- ✂️ **Precise Video Trimming** — select custom start and end timestamps for partial section downloads
+- ▶️ **Inline Video Preview** — preview videos directly inside the app before downloading
+- 🎨 **Dynamic Multi-Accent Themes** — Cyber Cyan, Electric Purple, Sunset Orange, and Neon Lime
+- ⬇️ **Download Progress Tracking** — real-time byte counter, speed calculator, and progress indicator
+- 📋 **Clipboard Auto-Paste** — automatically detects video URLs copied to your clipboard
+- 🗂️ **Download History** — local history tracking with thumbnail proxies and quick open links
+- ❓ **Interactive Help & FAQ** — built-in step-by-step user guide and troubleshooting answers
+- 🛡️ **DRM Platform Protection** — Netflix, Disney+, HBO Max, etc. are blocked
+- 🚦 **Rate Limiting & Security** — rate-limited backend with Helmet security headers
+- 📱 **Mobile-Friendly Design** — fully responsive slide-out navbar and glassmorphic layout
+- 🌑 **Pitch Black Glassmorphic UI** — modern dark mode aesthetics with particle animations
 
 ---
 
@@ -27,11 +30,12 @@ A modern, responsive web application for downloading publicly accessible videos 
 - **Node.js** ≥ 18
 - **yt-dlp** installed and available on PATH
   ```bash
-  # Install yt-dlp
-  pip install yt-dlp
-  # or on Windows
+  # Install or upgrade yt-dlp via pip
+  pip install --upgrade yt-dlp
+  # or on Windows via WinGet
   winget install yt-dlp
   ```
+- **FFmpeg** installed and available on PATH
 
 ---
 
@@ -92,14 +96,20 @@ flowchart LR
     PROXY --> OK
 ```
 
-## Project Structure
+---
+
+## 📁 Project Structure
 
 ```
 videofetch/
+├── api/                        # Vercel serverless deployment entry point
+│   └── index.js
 ├── client/                     # React frontend (Vite)
 │   ├── public/
-│   │   ├── VideoFetch.png      # Original README hero banner
-│   │   └── logo.png            # App logo icon
+│   │   ├── 8ernity_brand.png   # Sidebar bottom branding asset
+│   │   ├── favicon.png         # Transparent app tab favicon
+│   │   ├── logo.png            # App logo icon
+│   │   └── VideoFetch.png      # Hero banner graphic
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── Disclaimer.jsx
@@ -108,6 +118,8 @@ videofetch/
 │   │   │   ├── Footer.jsx
 │   │   │   ├── FormatSelector.jsx
 │   │   │   ├── Header.jsx
+│   │   │   ├── Help.jsx
+│   │   │   ├── ParticleBackground.jsx
 │   │   │   ├── Settings.jsx
 │   │   │   ├── SideNavBar.jsx
 │   │   │   ├── URLInput.jsx
@@ -127,6 +139,8 @@ videofetch/
 │   │   └── main.jsx
 │   ├── index.html
 │   ├── package.json
+│   ├── postcss.config.js
+│   ├── tailwind.config.js
 │   └── vite.config.js
 ├── server/                     # Express backend
 │   ├── src/
@@ -143,13 +157,16 @@ videofetch/
 │   │   └── index.js
 │   ├── .env.example
 │   └── package.json
+├── .gitignore
+├── LICENSE.md
 ├── README.md
-└── package.json
+├── package.json
+└── vercel.json
 ```
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Clone and install dependencies
 
@@ -175,7 +192,7 @@ The frontend runs at `http://localhost:5173` and proxies API requests to the bac
 
 ---
 
-## Environment Variables
+## ⚙️ Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
@@ -187,18 +204,18 @@ The frontend runs at `http://localhost:5173` and proxies API requests to the bac
 
 ---
 
-## Deployment
+## 🌐 Deployment
 
 ### Fullstack → Render
 
-1. Push code to your GitHub repo
+1. Push code to your GitHub repository
 2. Connect repository on [Render](https://render.com)
 3. Set **Build Command**: `npm run build`
 4. Set **Start Command**: `npm start`
 
 ---
 
-## Security & Legal
+## 🛡️ Security & Legal
 
 - ⚠️ Only download content you have the rights to access
 - 🛡️ DRM-protected platforms (Netflix, Disney+, HBO Max, etc.) are blocked
@@ -208,18 +225,18 @@ The frontend runs at `http://localhost:5173` and proxies API requests to the bac
 
 ---
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, Vite 5, Tailwind CSS |
+| Frontend | React 18, Vite 5, Tailwind CSS v4 |
 | Backend | Node.js, Express 4 |
 | Video Engine | yt-dlp (CLI) + FFmpeg |
-| Styling | Pitch black background, glassmorphism, dynamic theme accents |
+| Styling | Pitch black background, glassmorphism, dynamic multi-accent themes |
 | State | React hooks + localStorage |
 
 ---
 
-## License
+## 📜 License
 
 This project is licensed under the [MIT License](LICENSE.md) — use responsibly.

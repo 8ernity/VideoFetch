@@ -35,19 +35,47 @@ export default function DownloadHistory({ history = [], onClear, onRemove }) {
               className="glass-panel rounded-xl overflow-hidden flex flex-col border border-white/10 hover:border-primary/40 transition-all duration-300 group"
             >
               {/* Thumbnail Container */}
-              <div className="relative aspect-video bg-black overflow-hidden">
-                <img
-                  src={item.thumbnail || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80'}
-                  alt={item.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-80"
-                />
-                <div className="absolute top-2 left-2">
+              <div className="relative aspect-video bg-black overflow-hidden flex items-center justify-center">
+                {item.thumbnail ? (
+                  <img
+                    src={
+                      item.thumbnail.startsWith('/api/') || item.thumbnail.startsWith('data:')
+                        ? item.thumbnail
+                        : `/api/video/thumbnail?url=${encodeURIComponent(item.thumbnail)}`
+                    }
+                    alt={item.title}
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      // Fallback to direct URL first if proxy failed, else fallback to dark gradient placeholder
+                      if (item.thumbnail && e.target.src.includes('/api/video/thumbnail')) {
+                        e.target.src = item.thumbnail;
+                      } else {
+                        e.target.onerror = null;
+                        e.target.style.display = 'none';
+                        const parent = e.target.parentElement;
+                        if (parent && !parent.querySelector('.thumb-fallback')) {
+                          const fallback = document.createElement('div');
+                          fallback.className = 'thumb-fallback absolute inset-0 w-full h-full bg-gradient-to-br from-surface-container-high via-surface-container to-surface-container-lowest flex items-center justify-center';
+                          fallback.innerHTML = '<span class="material-symbols-outlined text-5xl text-primary/40">play_circle</span>';
+                          parent.appendChild(fallback);
+                        }
+                      }
+                    }}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-85"
+                  />
+                ) : (
+                  <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-surface-container-high via-surface-container to-surface-container-lowest flex items-center justify-center">
+                    <span className="material-symbols-outlined text-5xl text-primary/40">play_circle</span>
+                  </div>
+                )}
+
+                <div className="absolute top-2 left-2 z-10">
                   <span className="bg-primary/90 text-on-primary-fixed font-mono text-[11px] font-bold px-2 py-0.5 rounded shadow-sm">
                     {item.format || 'MP4'}
                   </span>
                 </div>
                 {item.duration && (
-                  <div className="absolute bottom-2 right-2">
+                  <div className="absolute bottom-2 right-2 z-10">
                     <span className="bg-black/70 backdrop-blur-sm text-white font-mono text-[11px] px-2 py-0.5 rounded">
                       {item.duration}
                     </span>
