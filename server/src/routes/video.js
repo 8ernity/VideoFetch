@@ -108,8 +108,9 @@ router.get('/download', validateDownloadParams, async (req, res) => {
     try {
       await streamDownload(req.videoUrl, req.formatId, req.videoType, res, setDownloadHeaders, false, trimOpts);
     } catch (err) {
-      if (err.statusCode === 403 || err.statusCode === 404) {
-        console.log(`[Download] Link expired (status ${err.statusCode}), attempting refresh for: ${req.videoUrl}`);
+      const is403or404 = err.statusCode === 403 || err.statusCode === 404 || (err.message && (err.message.includes('403') || err.message.includes('404') || err.message.includes('status')));
+      if (is403or404) {
+        console.log(`[Download] Direct link expired/forbidden, attempting refresh for: ${req.videoUrl}`);
         try {
           const freshInfo = await getVideoInfo(req.videoUrl);
           const oldFormatId = req.formatId;
@@ -134,6 +135,8 @@ router.get('/download', validateDownloadParams, async (req, res) => {
   } catch (err) {
     console.error('[/api/video/download]', err.message);
     if (!res.headersSent) {
+      res.removeHeader('Content-Disposition');
+      res.setHeader('Content-Type', 'application/json');
       const status = err.statusCode || 500;
       res.status(status).json({ error: err.message });
     }

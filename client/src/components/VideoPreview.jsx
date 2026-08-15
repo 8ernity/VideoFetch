@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { formatDuration, formatViews, decodeHtmlEntities } from '../utils/formatters';
 
-export default function VideoPreview({ info, selectedFormat, videoUrl }) {
+export default function VideoPreview({ info, selectedFormat, videoUrl, onDurationDetected }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -31,6 +31,11 @@ export default function VideoPreview({ info, selectedFormat, videoUrl }) {
             preload="auto"
             playsInline
             src={proxiedStreamUrl}
+            onLoadedMetadata={(e) => {
+              if (e.target.duration && typeof onDurationDetected === 'function') {
+                onDurationDetected(e.target.duration);
+              }
+            }}
             className="w-full h-full object-contain bg-black"
           >
             Your browser does not support HTML5 video playback.

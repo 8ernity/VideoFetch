@@ -102,8 +102,6 @@ flowchart LR
 
 ```
 videofetch/
-├── api/                        # Vercel serverless deployment entry point
-│   └── index.js
 ├── client/                     # React frontend (Vite)
 │   ├── public/
 │   │   ├── 8ernity_brand.png   # Sidebar bottom branding asset
@@ -157,11 +155,12 @@ videofetch/
 │   │   └── index.js
 │   ├── .env.example
 │   └── package.json
+├── .dockerignore
 ├── .gitignore
+├── Dockerfile
 ├── LICENSE.md
 ├── README.md
-├── package.json
-└── vercel.json
+└── package.json
 ```
 
 ---

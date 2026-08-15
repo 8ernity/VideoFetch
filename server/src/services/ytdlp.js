@@ -67,6 +67,9 @@ function getBaseArgs(url, opts = {}) {
 
   if (url) {
     args.push('--referer', url);
+    if ((url.includes('youtube.com') || url.includes('youtu.be')) && opts.playerClient) {
+      args.push('--extractor-args', `youtube:player_client=${opts.playerClient}`);
+    }
   }
 
   const proxy = opts.useProxy ? (PROXY || 'auto') : PROXY;
@@ -74,8 +77,13 @@ function getBaseArgs(url, opts = {}) {
     args.push('--proxy', proxy);
   }
 
-  if (process.env.COOKIES_FILE) {
-    args.push('--cookies', process.env.COOKIES_FILE);
+  const defaultCookiesPath = path.resolve(TEMP_DIR, '../cookies.txt');
+  const envCookiesPath = process.env.COOKIES_FILE ? path.resolve(process.env.COOKIES_FILE) : null;
+  const cookiesFile = (envCookiesPath && fs.existsSync(envCookiesPath)) ? envCookiesPath
+    : (fs.existsSync(defaultCookiesPath) ? defaultCookiesPath : null);
+
+  if (cookiesFile) {
+    args.push('--cookies', cookiesFile);
   }
 
   return args;
@@ -189,6 +197,37 @@ async function attemptGetInfo(url, useProxy) {
 
   if (result.code !== 0) {
     const errorMsg = result.stderr.toLowerCase();
+    const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+
+    // Automatic fallback for YouTube datacenter IP bot/auth blocks on hosts like Render
+    if (isYouTube && (errorMsg.includes('sign in') || errorMsg.includes('bot') || errorMsg.includes('cookies') || errorMsg.includes('authentication') || errorMsg.includes('confirm you'))) {
+      console.log('[yt-dlp] Cloud IP bot block detected on YouTube, attempting player client fallbacks...');
+      const fallbackClients = [
+        'ios,android,web',
+        'tv_embedded,mweb',
+        'mweb,android',
+        'android,tv_embedded'
+      ];
+      for (const clientArg of fallbackClients) {
+        try {
+          console.log(`[yt-dlp] Retrying extraction with player_client=${clientArg}...`);
+          const retryArgs = [
+            ...getBaseArgs(url, { useProxy, playerClient: clientArg }),
+            '--dump-json',
+            '--no-download',
+            url,
+          ];
+          const retryRes = await runYtdlp(retryArgs);
+          if (retryRes.code === 0 && retryRes.stdout) {
+            const raw = JSON.parse(retryRes.stdout);
+            return formatInfo(raw);
+          }
+        } catch (retryErr) {
+          console.log(`[yt-dlp] Retry player_client=${clientArg} failed:`, retryErr.message);
+        }
+      }
+    }
+
     if (
       errorMsg.includes('unable to extract') || 
       errorMsg.includes('unsupported url') ||
@@ -246,7 +285,9 @@ function streamHttpsUrl(targetUrl, headers, res, onHeaders, redirectCount = 0) {
       }
 
       if (dlRes.statusCode >= 400) {
-        return reject(new Error(`Server returned status ${dlRes.statusCode}`));
+        const err = new Error(`Server returned status ${dlRes.statusCode}`);
+        err.statusCode = dlRes.statusCode;
+        return reject(err);
       }
 
       // Forward response status code (e.g. 206 Partial Content or 200 OK)
@@ -309,9 +350,6 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
     const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
     
     if (!isDirectUrl && !isAudioOnly && isYouTube && !targetFormat.includes('+')) {
-      // For YouTube: use height-based format selection to guarantee H.264 video + AAC audio.
-      // Raw format IDs (e.g. '137') are video-only and can't have [vcodec] filters appended.
-      // Instead, detect the height from the format ID and request a proper merged stream.
       const ytFormatHeights = {
         '137': 1080, '299': 1080, '399': 1080, '614': 1080,
         '136': 720,  '298': 720,  '398': 720,
@@ -322,10 +360,12 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
         '18': 360,   '22': 720,
       };
       const height = ytFormatHeights[targetFormat] || null;
-      if (height) {
-        targetFormat = `bestvideo[height<=${height}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
+      if (targetFormat !== 'best' && targetFormat !== '18' && targetFormat !== '22') {
+        targetFormat = `${targetFormat}+140/${targetFormat}+bestaudio/bestvideo[height<=${height || 1080}]+bestaudio/best`;
+      } else if (height) {
+        targetFormat = `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
       } else if (targetFormat === 'best') {
-        targetFormat = `bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo+bestaudio/best`;
+        targetFormat = `bestvideo+bestaudio/best`;
       }
     }
 
@@ -445,61 +485,18 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
         }
       }
       return;
-    } else if (canStreamDirect) {
-      console.log(`[Process] Streaming directly on-the-fly for format: ${targetFormat}`);
-      // Notify headers immediately (chunked transfer encoding)
-      onHeaders();
+    }
 
-      const ytArgs = [
-        ...getBaseArgs(url, { useProxy }),
-        '-f', targetFormat,
-      ];
-
-      if (isAudioOnly) {
-        ytArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '5');
-      }
-
-      ytArgs.push('-o', '-', url);
-      ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR });
-
-      ytProc.stdout.pipe(res);
-
-      ytProc.stderr.on('data', (d) => {
-        ytError += d.toString();
-      });
-
-      ytProc.on('close', (code) => {
-        if (code !== 0) {
-          const errMsg = parseError(ytError);
-          console.error(`[yt-dlp] Direct streaming failed with code ${code}. Error: ${errMsg}`);
-          if (!res.headersSent) {
-            res.status(500).json({ error: errMsg });
-          }
-          return reject(new Error(errMsg));
-        }
-        resolve();
-      });
-
-      ytProc.on('error', (err) => {
-        console.error('[yt-dlp] Direct streaming process error:', err);
-        reject(err);
-      });
-
-      res.on('close', () => {
-        ytProc.kill('SIGTERM');
-      });
-      return;
-    } else {
-      console.log(`[Process] Buffering to file: ${tempFile}`);
-      const ytArgs = [
-        ...getBaseArgs(url, { useProxy }),
-        '-f', targetFormat,
-        '--concurrent-fragments', '4',
-        '--fragment-retries', '10',
-        '--no-part',
-        '-o', tempFile,
-        '--ffmpeg-location', FFMPEG_PATH
-      ];
+    console.log(`[Process] Buffering to file: ${tempFile}`);
+    const ytArgs = [
+      ...getBaseArgs(url, { useProxy }),
+      '-f', targetFormat,
+      '--concurrent-fragments', '4',
+      '--fragment-retries', '10',
+      '--no-part',
+      '-o', tempFile,
+      '--ffmpeg-location', FFMPEG_PATH
+    ];
 
       if (isAudioOnly) {
         ytArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '5');
@@ -526,7 +523,6 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
       
       ytArgs.push(url);
       ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
-    }
 
     ytProc.stderr.on('data', (d) => {
       ytError += d.toString();
@@ -580,6 +576,11 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
       try {
         const stats = fs.statSync(tempFile);
         const totalSize = stats.size;
+
+        if (totalSize < 500) {
+          if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+          return reject(new Error('Downloaded file is invalid or corrupt (size < 500 bytes).'));
+        }
 
         // Set headers with correct content length
         res.setHeader('Content-Length', totalSize);

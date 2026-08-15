@@ -64,7 +64,7 @@ export default function App() {
       speed: 'Preparing stream...',
       downloaded: '0 MB',
       total: selectedFormat.filesize ? `${Math.round(selectedFormat.filesize / 1024 / 1024)} MB` : 'Calculating...',
-      eta: 'Starting...',
+      eta: 'Downloading...',
     });
     setError(null);
 
@@ -80,11 +80,14 @@ export default function App() {
         trim && trim.enabled ? trim.endTime : null
       );
 
-      // Trigger native browser download via real backend streaming URL
-      const newWindow = window.open(downloadUrl, '_blank');
-      if (!newWindow) {
-        window.location.href = downloadUrl;
-      }
+      // Trigger native instant browser streaming download via hidden iframe
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = downloadUrl;
+      document.body.appendChild(iframe);
+      setTimeout(() => {
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+      }, 60000);
 
       // Add real download item to history
       addToHistory({
@@ -98,12 +101,9 @@ export default function App() {
         url,
       });
 
-      // Update downloading status after trigger
-      setTimeout(() => {
-        setDownloading(false);
-        setNotification('Download initiated! Check your browser downloads.');
-        setTimeout(() => setNotification(null), 4000);
-      }, 2500);
+      setDownloading(false);
+      setNotification('Download initiated! Check your browser downloads.');
+      setTimeout(() => setNotification(null), 4000);
 
     } catch (err) {
       setError(err.message || 'Download initialization failed.');
@@ -144,9 +144,9 @@ export default function App() {
 
         {/* Global Toast Notification */}
         {notification && (
-          <div className="fixed top-20 right-6 z-50 bg-primary-container text-on-primary-container px-4 py-3 rounded-lg shadow-lg border border-primary/40 flex items-center gap-2 animate-bounce">
-            <span className="material-symbols-outlined text-[18px]">check_circle</span>
-            <span className="text-sm font-medium">{notification}</span>
+          <div className="fixed top-24 right-6 md:right-10 z-[99999] bg-primary text-on-primary font-medium px-5 py-3 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-white/20 flex items-center gap-3 animate-bounce">
+            <span className="material-symbols-outlined text-[20px]">check_circle</span>
+            <span className="text-sm font-semibold">{notification}</span>
           </div>
         )}
 
@@ -210,6 +210,11 @@ export default function App() {
                       info={videoInfo}
                       selectedFormat={selectedFormat}
                       videoUrl={url}
+                      onDurationDetected={(durationSec) => {
+                        if (durationSec > 0 && Math.round(durationSec) !== videoInfo.duration) {
+                          setVideoInfo(prev => prev ? { ...prev, duration: Math.round(durationSec) } : prev);
+                        }
+                      }}
                     />
                     <VideoTrimmer
                       duration={videoInfo.duration || 0}

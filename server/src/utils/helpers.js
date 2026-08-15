@@ -36,5 +36,5 @@ export function sanitizeFilename(name) {
   return name
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
     .replace(/\s+/g, '_')
-    .substring(0, 200);
+    .substring(0, 80);
 }

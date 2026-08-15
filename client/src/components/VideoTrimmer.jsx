@@ -4,16 +4,16 @@ import { formatSeconds, parseTimestamp } from '../utils/formatters';
 export default function VideoTrimmer({ duration = 0, onTrimChange }) {
   const [enabled, setEnabled] = useState(false);
   const [startSec, setStartSec] = useState(0);
-  const [endSec, setEndSec] = useState(duration || 300);
+  const [endSec, setEndSec] = useState(duration || 0);
 
   const [startTime, setStartTime] = useState('00:00:00');
-  const [endTime, setEndTime] = useState(formatSeconds(duration || 300));
+  const [endTime, setEndTime] = useState(formatSeconds(duration || 0));
 
   const trackRef = useRef(null);
   const isDraggingLeft = useRef(false);
   const isDraggingRight = useRef(false);
 
-  const maxVal = duration > 0 ? duration : 300;
+  const maxVal = duration > 0 ? duration : 60;
 
   useEffect(() => {
     if (duration > 0) {

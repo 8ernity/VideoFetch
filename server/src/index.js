@@ -22,7 +22,11 @@ const __dirname = path.dirname(__filename);
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
 
 /* ── Global middleware ── */
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false,
+}));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
 app.use('/api/', rateLimiter);
@@ -67,9 +71,23 @@ app.use((err, _req, res, _next) => {
 /* ── Start ── */
 // Listen in standalone Node environments (Render, Railway, Docker, Local Dev)
 if (process.env.VERCEL !== '1') {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n  ⚡ VideoFetch server running on port ${PORT} (0.0.0.0)\n`);
-  });
+  const startServer = (portToUse) => {
+    const server = app.listen(portToUse, '0.0.0.0', () => {
+      console.log(`\n  ⚡ VideoFetch server running on port ${portToUse} (0.0.0.0)\n`);
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`[Server] Port ${portToUse} is already in use by another running server.`);
+        console.warn(`[Server] Automatically starting on port ${Number(portToUse) + 1}...\n`);
+        startServer(Number(portToUse) + 1);
+      } else {
+        console.error('[Server Error]', err);
+      }
+    });
+  };
+
+  startServer(PORT);
 }
 
 export default app;
