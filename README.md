@@ -1,11 +1,9 @@
 # ⚡ VideoFetch
 <p align="center">
-  <img src="./client/public/VideoFetch.png" alt="WRAITH Banner" width="100%">
+  <img src="./client/public/VideoFetch.png" alt="VideoFetch Banner" width="100%">
 </p>
 
 A modern, responsive web application for downloading publicly accessible videos from supported platforms. Built with **React + Vite** (frontend) and **Node.js + Express** (backend), powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp).
-
-![Dark futuristic theme with glassmorphic UI]
 
 ---
 
@@ -20,7 +18,7 @@ A modern, responsive web application for downloading publicly accessible videos 
 - 🛡️ **DRM platform blocking** — Netflix, Disney+, etc. are blocked
 - 🚦 **Rate limiting** — prevents API abuse
 - 📱 **Mobile-friendly** — fully responsive design
-- 🌑 **Dark futuristic theme** — glassmorphism, neon accents, particle background
+- 🌑 **Dark futuristic theme** — glassmorphism, neon accents, pitch black background
 
 ---
 
@@ -100,6 +98,8 @@ flowchart LR
 videofetch/
 ├── client/                     # React frontend (Vite)
 │   ├── public/
+│   │   ├── VideoFetch.png      # Original README hero banner
+│   │   └── logo.png            # App logo icon
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── Disclaimer.jsx
@@ -108,10 +108,13 @@ videofetch/
 │   │   │   ├── Footer.jsx
 │   │   │   ├── FormatSelector.jsx
 │   │   │   ├── Header.jsx
-│   │   │   ├── ParticleBackground.jsx
+│   │   │   ├── Settings.jsx
+│   │   │   ├── SideNavBar.jsx
 │   │   │   ├── URLInput.jsx
-│   │   │   └── VideoPreview.jsx
+│   │   │   ├── VideoPreview.jsx
+│   │   │   └── VideoTrimmer.jsx
 │   │   ├── hooks/
+│   │   │   ├── useAppSettings.js
 │   │   │   ├── useClipboard.js
 │   │   │   └── useDownloadHistory.js
 │   │   ├── utils/
@@ -140,9 +143,8 @@ videofetch/
 │   │   └── index.js
 │   ├── .env.example
 │   └── package.json
-├── API.md
 ├── README.md
-└── .gitignore
+└── package.json
 ```
 
 ---
@@ -152,13 +154,7 @@ videofetch/
 ### 1. Clone and install dependencies
 
 ```bash
-# Install server dependencies
-cd videofetch/server
-npm install
-
-# Install client dependencies
-cd ../client
-npm install
+npm run install-all
 ```
 
 ### 2. Configure environment
@@ -169,19 +165,9 @@ cp .env.example .env
 # Edit .env if needed (defaults work for local dev)
 ```
 
-### 3. Start both servers
+### 3. Start development server
 
-Since the project is located at `C:\Users\arpan\.gemini\antigravity\scratch\videofetch`, you must change into that directory first.
-
-**Terminal 1 — Backend:**
 ```bash
-cd C:\Users\arpan\.gemini\antigravity\scratch\videofetch\server
-npm run dev
-```
-
-**Terminal 2 — Frontend:**
-```bash
-cd C:\Users\arpan\.gemini\antigravity\scratch\videofetch\client
 npm run dev
 ```
 
@@ -203,23 +189,12 @@ The frontend runs at `http://localhost:5173` and proxies API requests to the bac
 
 ## Deployment
 
-### Frontend → Vercel
+### Fullstack → Render
 
-```bash
-cd client
-npx vercel
-```
-
-Set the `VITE_API_BASE` environment variable to your backend URL.
-
-### Backend → Render / Railway
-
-1. Push the `server/` directory to a Git repo
-2. Set environment variables in the dashboard
-3. Build command: `npm install`
-4. Start command: `npm start`
-
-> **Important:** The deployment target must have `yt-dlp` installed. Use a custom Dockerfile or buildpack if needed.
+1. Push code to your GitHub repo
+2. Connect repository on [Render](https://render.com)
+3. Set **Build Command**: `npm run build`
+4. Set **Start Command**: `npm start`
 
 ---
 
@@ -237,14 +212,14 @@ Set the `VITE_API_BASE` environment variable to your backend URL.
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, Vite 5 |
+| Frontend | React 18, Vite 5, Tailwind CSS |
 | Backend | Node.js, Express 4 |
-| Video Engine | yt-dlp (CLI) |
-| Styling | Vanilla CSS (custom design system) |
+| Video Engine | yt-dlp (CLI) + FFmpeg |
+| Styling | Pitch black background, glassmorphism, dynamic theme accents |
 | State | React hooks + localStorage |
 
 ---
 
 ## License
 
-MIT — use responsibly.
+This project is licensed under the [MIT License](LICENSE.md) — use responsibly.

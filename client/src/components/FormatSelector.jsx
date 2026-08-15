@@ -47,7 +47,6 @@ function getFormatLabel(fmt, index) {
 export default function FormatSelector({ formats = [], selected, onSelect }) {
   const [mediaType, setMediaType] = useState('video'); // 'video' | 'audio'
 
-  // Filter video formats
   const videoFormats = formats.filter((f) => f.type !== 'audio-only');
 
   const deduplicatedVideoFormats = [];
@@ -148,29 +147,25 @@ export default function FormatSelector({ formats = [], selected, onSelect }) {
                     onSelect(fmt);
                   }
                 }}
-                className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
                   isSelected
                     ? 'border-primary bg-primary/10'
                     : 'border-white/5 bg-surface-container hover:bg-surface-container-highest'
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    name="quality"
-                    checked={isSelected}
-                    onChange={() => {
-                      if (mediaType === 'audio') {
-                        onSelect(getAudioFormatPayload(fmt));
-                      } else {
-                        onSelect(fmt);
-                      }
-                    }}
-                    className="form-radio text-primary border-outline-variant bg-surface-container focus:ring-primary focus:ring-offset-surface"
-                  />
+                  {/* Custom Radio Button Indicator */}
+                  <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
+                    isSelected
+                      ? 'border-primary bg-primary/20'
+                      : 'border-white/20 bg-surface-container-highest'
+                  }`}>
+                    {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-primary" />}
+                  </div>
+
                   <div>
                     <div className="font-body-md text-on-surface flex items-center gap-2 font-medium">
-                      {resolutionLabel}
+                      <span>{resolutionLabel}</span>
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${
                           isSelected
