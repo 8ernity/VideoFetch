@@ -104,7 +104,7 @@ function getBaseArgs(url, opts = {}) {
       args.push('--referer', url);
     }
     if (isYouTube) {
-      args.push('--extractor-args', `youtube:player_client=web,default`);
+      args.push('--extractor-args', `youtube:player_client=mweb,default`);
     }
   }
 
@@ -112,6 +112,7 @@ function getBaseArgs(url, opts = {}) {
   if (proxy) {
     args.push('--proxy', proxy);
   }
+
 
   const defaultCookiesPath = path.resolve(TEMP_DIR, '../cookies.txt');
   const envCookiesPath = process.env.COOKIES_FILE ? path.resolve(process.env.COOKIES_FILE) : null;
@@ -1601,6 +1602,7 @@ async function getYtOembedFallback(url) {
     uploader: data.author_name || 'YouTube Channel',
     duration: duration,
     extractor: 'youtube',
+    is_fake_fallback: true,
     formats: [
       { format_id: 'best', resolution: '1080p Full HD', height: 1080, ext: 'mp4', type: 'video', filesize: null },
       { format_id: '720p', resolution: '720p HD', height: 720, ext: 'mp4', type: 'video', filesize: null },

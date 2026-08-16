@@ -87,7 +87,7 @@ export default function App() {
       document.body.appendChild(iframe);
       setTimeout(() => {
         if (document.body.contains(iframe)) document.body.removeChild(iframe);
-      }, 60000);
+      }, 3600000); // 1 hour timeout for large 4K files
 
       // Add real download item to history
       addToHistory({
@@ -206,6 +206,15 @@ export default function App() {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                   {/* Left Column: Real Media Preview & Video Trimmer */}
                   <div className="lg:col-span-7 flex flex-col gap-6">
+                    {videoInfo.is_fake_fallback && (
+                      <div className="glass-panel border-warning/30 bg-warning/10 text-on-surface p-4 rounded-xl flex items-start gap-3">
+                        <span className="material-symbols-outlined text-warning mt-0.5">warning</span>
+                        <div className="text-sm">
+                          <p className="font-bold text-warning mb-1">Unverified Formats (Bot Protection Triggered)</p>
+                          <p className="opacity-90">YouTube blocked our metadata extractor. We are showing default fallback formats, but downloads might fail if the chosen format doesn't actually exist for this video.</p>
+                        </div>
+                      </div>
+                    )}
                     <VideoPreview
                       info={videoInfo}
                       selectedFormat={selectedFormat}

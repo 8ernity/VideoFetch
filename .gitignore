@@ -11,3 +11,8 @@ server/temp_downloads/
 
 .vercel
 .env*
+
+server/cookies.txt
+cookies.txt
+
+scratch/

@@ -72,23 +72,18 @@ app.use((err, _req, res, _next) => {
 /* ── Start ── */
 // Listen in standalone Node environments (Render, Railway, Docker, Local Dev)
 if (process.env.VERCEL !== '1') {
-  const startServer = (portToUse) => {
-    const server = app.listen(portToUse, '0.0.0.0', () => {
-      console.log(`\n  ⚡ VideoFetch server running on port ${portToUse} (0.0.0.0)\n`);
-    });
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  ⚡ VideoFetch server running on port ${PORT} (0.0.0.0)\n`);
+  });
 
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.warn(`[Server] Port ${portToUse} is already in use by another running server.`);
-        console.warn(`[Server] Automatically starting on port ${Number(portToUse) + 1}...\n`);
-        startServer(Number(portToUse) + 1);
-      } else {
-        console.error('[Server Error]', err);
-      }
-    });
-  };
-
-  startServer(PORT);
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[Server Error] Port ${PORT} is already in use. Please kill the zombie process or change PORT.`);
+      process.exit(1);
+    } else {
+      console.error('[Server Error]', err);
+    }
+  });
 }
 
 export default app;
