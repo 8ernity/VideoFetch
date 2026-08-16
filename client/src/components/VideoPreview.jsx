@@ -15,31 +15,26 @@ export default function VideoPreview({ info, selectedFormat, videoUrl, onDuratio
     ? `/api/video/thumbnail?url=${encodeURIComponent(info.thumbnail)}`
     : null;
 
-  const isYouTube = info.extractor === 'youtube' || (videoUrl && (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')));
-  const videoIdMatch = videoUrl ? videoUrl.match(/(?:v=|\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/) : null;
-  const ytVideoId = (info.id && info.id.length === 11) ? info.id : (videoIdMatch ? videoIdMatch[1] : null);
-  const embedUrl = isYouTube && ytVideoId ? `https://www.youtube.com/embed/${ytVideoId}?autoplay=1` : null;
+  const streamFormatId = selectedFormat ? selectedFormat.format_id : info.formats && info.formats[0] ? info.formats[0].format_id : 'best';
+  const proxiedStreamUrl = videoUrl
+    ? `/api/video/stream?url=${encodeURIComponent(videoUrl)}&format_id=${encodeURIComponent(streamFormatId)}`
+    : null;
 
   return (
     <div className="glass-panel rounded-xl overflow-hidden flex flex-col border border-white/10 glow-active">
       {/* Video Player / Thumbnail Area */}
       <div className="relative aspect-video bg-black flex items-center justify-center group overflow-hidden">
         {isPlaying ? (
-          embedUrl ? (
-            <iframe
-              src={embedUrl}
-              title={titleStr}
-              className="w-full h-full border-0 bg-black"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-            />
-          ) : (
             <video
               controls
               autoPlay
               preload="auto"
               playsInline
               src={proxiedStreamUrl}
+              onError={() => {
+                console.warn('[VideoPreview] Stream playback failed, reverting to thumbnail preview.');
+                setIsPlaying(false);
+              }}
               onLoadedMetadata={(e) => {
                 if (e.target.duration && typeof onDurationDetected === 'function') {
                   onDurationDetected(e.target.duration);
@@ -49,7 +44,6 @@ export default function VideoPreview({ info, selectedFormat, videoUrl, onDuratio
             >
               Your browser does not support HTML5 video playback.
             </video>
-          )
         ) : (
           <>
             {/* Thumbnail Display */}
@@ -67,8 +61,11 @@ export default function VideoPreview({ info, selectedFormat, videoUrl, onDuratio
                 className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-95 transition-opacity duration-300"
               />
             ) : (
-              <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-surface-container-high via-surface-container to-surface-container-lowest flex items-center justify-center">
-                <span className="material-symbols-outlined text-6xl text-primary/40">play_circle</span>
+              <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-surface-container-highest via-surface-container-high to-surface-container-lowest flex flex-col items-center justify-center p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center mb-3">
+                  <span className="material-symbols-outlined text-4xl text-primary">movie</span>
+                </div>
+                <p className="text-xs text-on-surface-variant line-clamp-1 max-w-[80%] opacity-80">{titleStr}</p>
               </div>
             )}
 

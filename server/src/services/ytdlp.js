@@ -76,6 +76,7 @@ try {
  * @param {boolean} opts.useProxy - force proxy usage
  */
 function getBaseArgs(url, opts = {}) {
+  const isYouTube = url && (url.includes('youtube.com') || url.includes('youtu.be'));
   const args = [
     '--no-warnings',
     '--quiet',
@@ -84,8 +85,6 @@ function getBaseArgs(url, opts = {}) {
     '--geo-bypass',
     '--socket-timeout', '30',
     '--retries', '3',
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    '--add-header', 'Accept-Language:en-US,en;q=0.9',
     '--extractor-args', 'pornhub:api=0',  // Force non-PhantomJS extraction
     '--js-runtimes', 'node',              // Use Node.js for site challenges
     '--no-part',
@@ -93,10 +92,19 @@ function getBaseArgs(url, opts = {}) {
     '--paths', `temp:${TEMP_DIR}`,
   ];
 
+  // YouTube blocks downloads when a browser user-agent is sent via --user-agent.
+  // Let yt-dlp use its own default UA for YouTube; use browser UA for other sites.
+  if (!isYouTube) {
+    args.push('--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    args.push('--add-header', 'Accept-Language:en-US,en;q=0.9');
+  }
+
   if (url) {
-    args.push('--referer', url);
-    if ((url.includes('youtube.com') || url.includes('youtu.be')) && opts.playerClient) {
-      args.push('--extractor-args', `youtube:player_client=${opts.playerClient}`);
+    if (!isYouTube) {
+      args.push('--referer', url);
+    }
+    if (isYouTube) {
+      args.push('--extractor-args', `youtube:player_client=web,default`);
     }
   }
 
@@ -227,9 +235,9 @@ async function attemptGetInfo(url, useProxy) {
     const errorMsg = result.stderr.toLowerCase();
     const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
 
-    // Automatic fallback for YouTube datacenter IP bot/auth blocks on hosts like Render
-    if (isYouTube && (errorMsg.includes('sign in') || errorMsg.includes('bot') || errorMsg.includes('cookies') || errorMsg.includes('authentication') || errorMsg.includes('confirm you'))) {
-      console.log('[yt-dlp] Cloud IP bot block detected on YouTube, using fast oEmbed fallback...');
+    // Automatic fallback for YouTube datacenter IP bot/auth/429 blocks on hosts like Render
+    if (isYouTube && (errorMsg.includes('429') || errorMsg.includes('too many requests') || errorMsg.includes('sign in') || errorMsg.includes('bot') || errorMsg.includes('cookies') || errorMsg.includes('authentication') || errorMsg.includes('confirm you'))) {
+      console.log('[yt-dlp] Cloud IP 429/bot block detected on YouTube, using fast oEmbed fallback...');
       try {
         return await getYtOembedFallback(url);
       } catch (oembedErr) {
@@ -334,6 +342,9 @@ function streamHttpsUrl(targetUrl, headers, res, onHeaders, redirectCount = 0) {
  */
 export function streamDownload(url, formatId, type, res, onHeaders, useProxy = false, opts = null) {
   return new Promise(async (resolve, reject) => {
+    if (!fs.existsSync(TEMP_DIR)) {
+      try { fs.mkdirSync(TEMP_DIR, { recursive: true }); } catch (e) {}
+    }
     let isAudioOnly = type === 'audio-only' || (formatId && formatId.startsWith('audio_'));
     let audioBitrate = '320k';
     let targetFormat = formatId || 'best';
@@ -358,23 +369,21 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
     const isDirectUrl = targetFormat.startsWith('custom_direct_url|');
     const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
     
-    if (!isDirectUrl && !isAudioOnly && isYouTube && !targetFormat.includes('+')) {
-      const ytFormatHeights = {
-        '137': 1080, '299': 1080, '399': 1080, '614': 1080,
-        '136': 720,  '298': 720,  '398': 720,
-        '135': 480,  '397': 480,
-        '134': 360,  '396': 360,
-        '133': 240,  '395': 240,
-        '160': 144,  '394': 144,
-        '18': 360,   '22': 720,
-      };
-      const height = ytFormatHeights[targetFormat] || null;
-      if (targetFormat !== 'best' && targetFormat !== '18' && targetFormat !== '22') {
-        targetFormat = `${targetFormat}+140/${targetFormat}+bestaudio/bestvideo[height<=${height || 1080}]+bestaudio/best`;
-      } else if (height) {
-        targetFormat = `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
-      } else if (targetFormat === 'best') {
-        targetFormat = `bestvideo+bestaudio/best`;
+    if (!isDirectUrl && !isAudioOnly && isYouTube) {
+      if (targetFormat.includes('-')) {
+        targetFormat = targetFormat.split('-')[0];
+      }
+      if (!targetFormat.includes('+') && targetFormat !== '18' && targetFormat !== '22') {
+        const isStandardRes = /^(2160|1440|1080|720|480|360|240)p?$/i.test(targetFormat);
+        if (isStandardRes) {
+          const reqHeight = parseInt(targetFormat.replace(/\D/g, ''), 10);
+          targetFormat = `bestvideo[height<=${reqHeight}]+bestaudio/best[height<=${reqHeight}]/best`;
+        } else if (/^\d+$/.test(targetFormat)) {
+          // Raw yt-dlp format code (e.g. 137, 299, 313, 301)
+          targetFormat = `${targetFormat}+140/${targetFormat}+bestaudio/bestvideo+bestaudio/best`;
+        } else {
+          targetFormat = `bestvideo+bestaudio/best`;
+        }
       }
     }
 
@@ -500,7 +509,7 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
     const ytArgs = [
       ...getBaseArgs(url, { useProxy }),
       '-f', targetFormat,
-      '--concurrent-fragments', '4',
+      ...(isYouTube ? [] : ['--concurrent-fragments', '4']),
       '--fragment-retries', '10',
       '--no-part',
       '-o', tempFile,
@@ -531,6 +540,7 @@ export function streamDownload(url, formatId, type, res, onHeaders, useProxy = f
       // If needsPostTrim is true, we download the full video first and trim after
       
       ytArgs.push(url);
+      console.log(`[Process] Executing: yt-dlp ${ytArgs.join(' ')}`);
       ytProc = spawn(YTDLP, ytArgs, { cwd: TEMP_DIR, stdio: ['ignore', 'ignore', 'pipe'] });
 
     ytProc.stderr.on('data', (d) => {
@@ -1250,13 +1260,15 @@ export function customExtractor(url, prevCookies = '') {
         // Parse thumbnail
         let thumbnail = null;
         const ogImageMatch = data.match(/property="og:image"\s+content="([^"]+)"/i) ||
-                             data.match(/content="([^"]+)"\s+property="og:image"/i);
+                             data.match(/content="([^"]+)"\s+property="og:image"/i) ||
+                             data.match(/"display_url"\s*:\s*"([^"]+)"/) ||
+                             data.match(/"thumbnail_src"\s*:\s*"([^"]+)"/);
         const flashvarsImageMatch = data.match(/"image_url"\s*:\s*"([^"]+)"/);
         
         if (flashvarsImageMatch) {
-          thumbnail = flashvarsImageMatch[1].replace(/\\/g, '');
+          thumbnail = flashvarsImageMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
         } else if (ogImageMatch) {
-          thumbnail = ogImageMatch[1];
+          thumbnail = ogImageMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
         }
 
         const formats = [];

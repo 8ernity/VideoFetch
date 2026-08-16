@@ -9,31 +9,46 @@ const AUDIO_OPTIONS = [
   { bitrate: '96k', displayLabel: '96 kbps', subLabel: 'Low Quality', ext: 'mp3', type: 'audio-only' },
 ];
 
+function toStandardLabel(h) {
+  const height = parseInt(h, 10);
+  if (isNaN(height)) return null;
+  if (height >= 2160) return '4K (2160p)';
+  if (height >= 1400) return '1440p (2K)';
+  if (height >= 1000) return '1080p (Full HD)';
+  if (height >= 700) return '720p (HD)';
+  if (height >= 470) return '480p (SD)';
+  if (height >= 350) return '360p (SD)';
+  if (height >= 230) return '240p (SD)';
+  return `${height}p`;
+}
+
 function getFormatLabel(fmt, index) {
   if (fmt.type === 'audio-only') return 'Audio Stream (MP3)';
 
   if (fmt.height && typeof fmt.height === 'number') {
-    return `${fmt.height}p`;
+    const std = toStandardLabel(fmt.height);
+    if (std) return std;
   }
 
   if (fmt.resolution && fmt.resolution !== 'HD' && fmt.resolution !== 'SD') {
     if (fmt.resolution.includes('x')) {
       const parts = fmt.resolution.split('x');
-      if (parts[1] && !isNaN(parts[1])) return `${parts[1]}p`;
+      if (parts[1] && !isNaN(parts[1])) {
+        const std = toStandardLabel(parts[1]);
+        if (std) return std;
+      }
     }
     if (/^\d{3,4}p?$/i.test(String(fmt.resolution).trim())) {
-      const res = String(fmt.resolution).trim().toLowerCase();
-      return res.endsWith('p') ? res : `${res}p`;
+      const val = parseInt(String(fmt.resolution).replace(/\D/g, ''), 10);
+      const std = toStandardLabel(val);
+      if (std) return std;
     }
-    return String(fmt.resolution);
   }
 
   if (fmt.quality && fmt.quality !== 'HD' && fmt.quality !== 'SD') {
-    if (/^\d{3,4}p?$/i.test(String(fmt.quality).trim())) {
-      const res = String(fmt.quality).trim().toLowerCase();
-      return res.endsWith('p') ? res : `${res}p`;
-    }
-    return String(fmt.quality);
+    const val = parseInt(String(fmt.quality).replace(/\D/g, ''), 10);
+    const std = toStandardLabel(val);
+    if (std) return std;
   }
 
   const resolutionLadder = ['1080p (Full HD)', '720p (HD)', '480p (SD)', '360p (SD)', '240p (SD)'];

@@ -52,10 +52,13 @@ router.get('/thumbnail', async (req, res) => {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           'Referer': `${parsed.protocol}//${parsed.hostname}/`,
           'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Sec-Fetch-Dest': 'image',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Site': 'cross-site',
         };
 
         const client = targetUrl.startsWith('https') ? https : http;
-        const request = client.get(targetUrl, { headers }, (imgRes) => {
+        const request = client.get(targetUrl, { headers, rejectUnauthorized: false }, (imgRes) => {
           // Follow HTTP redirects (301, 302, 303, 307, 308)
           if (imgRes.statusCode >= 300 && imgRes.statusCode < 400 && imgRes.headers.location) {
             const redirectUrl = new URL(imgRes.headers.location, targetUrl).toString();
