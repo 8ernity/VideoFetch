@@ -15,6 +15,7 @@ import rateLimiter from './middleware/rateLimiter.js';
 config();
 
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 3001;
 
 const __filename = fileURLToPath(import.meta.url);

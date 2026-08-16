@@ -95,9 +95,8 @@ function getBaseArgs(url, opts = {}) {
 
   if (url) {
     args.push('--referer', url);
-    if (url.includes('youtube.com') || url.includes('youtu.be')) {
-      const client = opts.playerClient || 'ios,mweb';
-      args.push('--extractor-args', `youtube:player_client=${client}`);
+    if ((url.includes('youtube.com') || url.includes('youtu.be')) && opts.playerClient) {
+      args.push('--extractor-args', `youtube:player_client=${opts.playerClient}`);
     }
   }
 
@@ -825,8 +824,8 @@ function parseError(stderr) {
     return 'Access forbidden (HTTP 403). The site may be blocking automated access. Try using a proxy or providing cookies from a browser session.';
   if (s.includes('HTTP Error 404') || s.includes('404'))
     return 'Video not found (HTTP 404). The URL may be incorrect or the content was removed.';
-  if (s.includes('HTTP Error 429') || s.includes('429'))
-    return 'Rate limited by the site (HTTP 429). Please wait a moment and try again.';
+  if (s.includes('HTTP Error 429') || s.includes('429') || s.toLowerCase().includes('too many requests'))
+    return 'The video host temporarily rate-limited requests from this server IP (HTTP 429). Please wait a minute or try another video link.';
 
   // Fallback: show a cleaned-up version of stderr
   const cleaned = s.replace(/^ERROR:\s*/im, '').trim();
@@ -1569,12 +1568,26 @@ async function getYtOembedFallback(url) {
   const videoIdMatch = url.match(/(?:v=|\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
   const videoId = videoIdMatch ? videoIdMatch[1] : '';
 
+  let duration = 0;
+  if (videoId) {
+    try {
+      const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+      const pageHtml = await pageRes.text();
+      const match = pageHtml.match(/"lengthSeconds":"(\d+)"/);
+      if (match && match[1]) {
+        duration = parseInt(match[1], 10);
+      }
+    } catch (e) {}
+  }
+
   return {
     id: videoId,
     title: data.title || 'YouTube Video',
     thumbnail: data.thumbnail_url || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''),
     uploader: data.author_name || 'YouTube Channel',
-    duration: 0,
+    duration: duration,
     extractor: 'youtube',
     formats: [
       { format_id: 'best', resolution: '1080p Full HD', height: 1080, ext: 'mp4', type: 'video', filesize: null },
