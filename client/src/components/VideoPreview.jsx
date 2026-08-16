@@ -15,31 +15,41 @@ export default function VideoPreview({ info, selectedFormat, videoUrl, onDuratio
     ? `/api/video/thumbnail?url=${encodeURIComponent(info.thumbnail)}`
     : null;
 
-  const streamFormatId = selectedFormat ? selectedFormat.format_id : info.formats && info.formats[0] ? info.formats[0].format_id : 'best';
-  const proxiedStreamUrl = videoUrl
-    ? `/api/video/stream?url=${encodeURIComponent(videoUrl)}&format_id=${encodeURIComponent(streamFormatId)}`
-    : null;
+  const isYouTube = info.extractor === 'youtube' || (videoUrl && (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')));
+  const videoIdMatch = videoUrl ? videoUrl.match(/(?:v=|\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/) : null;
+  const ytVideoId = (info.id && info.id.length === 11) ? info.id : (videoIdMatch ? videoIdMatch[1] : null);
+  const embedUrl = isYouTube && ytVideoId ? `https://www.youtube.com/embed/${ytVideoId}?autoplay=1` : null;
 
   return (
     <div className="glass-panel rounded-xl overflow-hidden flex flex-col border border-white/10 glow-active">
       {/* Video Player / Thumbnail Area */}
       <div className="relative aspect-video bg-black flex items-center justify-center group overflow-hidden">
         {isPlaying ? (
-          <video
-            controls
-            autoPlay
-            preload="auto"
-            playsInline
-            src={proxiedStreamUrl}
-            onLoadedMetadata={(e) => {
-              if (e.target.duration && typeof onDurationDetected === 'function') {
-                onDurationDetected(e.target.duration);
-              }
-            }}
-            className="w-full h-full object-contain bg-black"
-          >
-            Your browser does not support HTML5 video playback.
-          </video>
+          embedUrl ? (
+            <iframe
+              src={embedUrl}
+              title={titleStr}
+              className="w-full h-full border-0 bg-black"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          ) : (
+            <video
+              controls
+              autoPlay
+              preload="auto"
+              playsInline
+              src={proxiedStreamUrl}
+              onLoadedMetadata={(e) => {
+                if (e.target.duration && typeof onDurationDetected === 'function') {
+                  onDurationDetected(e.target.duration);
+                }
+              }}
+              className="w-full h-full object-contain bg-black"
+            >
+              Your browser does not support HTML5 video playback.
+            </video>
+          )
         ) : (
           <>
             {/* Thumbnail Display */}

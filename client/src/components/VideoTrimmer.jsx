@@ -4,10 +4,10 @@ import { formatSeconds, parseTimestamp } from '../utils/formatters';
 export default function VideoTrimmer({ duration = 0, onTrimChange }) {
   const [enabled, setEnabled] = useState(false);
   const [startSec, setStartSec] = useState(0);
-  const [endSec, setEndSec] = useState(duration || 0);
+  const [endSec, setEndSec] = useState(duration > 0 ? duration : 0);
 
   const [startTime, setStartTime] = useState('00:00:00');
-  const [endTime, setEndTime] = useState(formatSeconds(duration || 0));
+  const [endTime, setEndTime] = useState(formatSeconds(duration > 0 ? duration : 0));
 
   const trackRef = useRef(null);
   const isDraggingLeft = useRef(false);
@@ -15,12 +15,13 @@ export default function VideoTrimmer({ duration = 0, onTrimChange }) {
 
   const maxVal = duration > 0 ? duration : 60;
 
+  // Ensure endSec syncs with duration when metadata finishes loading
   useEffect(() => {
-    if (duration > 0) {
+    if (duration > 0 && (endSec === 0 || endSec > duration)) {
       setEndSec(duration);
       setEndTime(formatSeconds(duration));
     }
-  }, [duration]);
+  }, [duration, endSec]);
 
   // Keep text input strings formatted when seconds change
   useEffect(() => {
@@ -31,22 +32,32 @@ export default function VideoTrimmer({ duration = 0, onTrimChange }) {
     setEndTime(formatSeconds(endSec));
   }, [endSec]);
 
+  const handleToggle = (e) => {
+    const nextVal = e.target.checked;
+    setEnabled(nextVal);
+    if (nextVal && (endSec === 0 || endSec <= startSec)) {
+      const validEnd = duration > 0 ? duration : 60;
+      setEndSec(validEnd);
+      setEndTime(formatSeconds(validEnd));
+    }
+  };
+
   // Notify parent component of trim state changes
   useEffect(() => {
     if (enabled) {
       onTrimChange({
         enabled: true,
         startTime: startSec,
-        endTime: endSec,
+        endTime: endSec || maxVal,
         startSec,
-        endSec,
+        endSec: endSec || maxVal,
         start: startSec,
-        end: endSec,
+        end: endSec || maxVal,
       });
     } else {
       onTrimChange(null);
     }
-  }, [enabled, startSec, endSec, onTrimChange]);
+  }, [enabled, startSec, endSec, maxVal, onTrimChange]);
 
   const calcSecondsFromX = (clientX) => {
     if (!trackRef.current) return 0;
@@ -125,7 +136,7 @@ export default function VideoTrimmer({ duration = 0, onTrimChange }) {
           <input
             type="checkbox"
             checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
+            onChange={handleToggle}
             className="sr-only peer"
           />
           <div className="w-9 h-5 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary" />
