@@ -116,11 +116,19 @@ function getBaseArgs(url, opts = {}) {
 
   const defaultCookiesPath = path.resolve(TEMP_DIR, '../cookies.txt');
   const envCookiesPath = process.env.COOKIES_FILE ? path.resolve(process.env.COOKIES_FILE) : null;
+  
+  if (envCookiesPath) {
+    console.log(`[yt-dlp] Checking COOKIES_FILE env path: ${envCookiesPath} - Exists? ${fs.existsSync(envCookiesPath)}`);
+  }
+
   const cookiesFile = (envCookiesPath && fs.existsSync(envCookiesPath)) ? envCookiesPath
     : (fs.existsSync(defaultCookiesPath) ? defaultCookiesPath : null);
 
   if (cookiesFile) {
+    console.log(`[yt-dlp] Using cookies file: ${cookiesFile}`);
     args.push('--cookies', cookiesFile);
+  } else {
+    console.log(`[yt-dlp] NO COOKIES FILE FOUND. YouTube downloads may fail with 403/429.`);
   }
 
   return args;
