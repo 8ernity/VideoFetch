@@ -14,18 +14,46 @@ import crypto from 'crypto';
 import { spawn, execSync } from 'child_process';
 import { formatBytes, formatDuration } from '../utils/helpers.js';
 
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SERVER_ROOT = path.resolve(__dirname, '../../');
+
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
 let FFMPEG_PATH = 'ffmpeg'; // default
 const TIMEOUT_MS = 120_000;
 const PROXY = process.env.PROXY_URL || '';
 const TEMP_DIR = process.env.NODE_ENV === 'production' 
   ? '/tmp' 
-  : path.join(process.cwd(), 'temp_downloads');
+  : path.resolve(SERVER_ROOT, 'temp_downloads');
 
 // Ensure temp directory exists
 if (process.env.NODE_ENV !== 'production' && !fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
+
+// Auto-cleanup stale temporary files older than 30 minutes
+export function cleanupTempFiles() {
+  try {
+    if (!fs.existsSync(TEMP_DIR)) return;
+    const files = fs.readdirSync(TEMP_DIR);
+    const now = Date.now();
+    for (const file of files) {
+      const filePath = path.join(TEMP_DIR, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > 30 * 60 * 1000) {
+          fs.unlinkSync(filePath);
+          console.log(`[Cleanup] Removed stale temp file: ${file}`);
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+cleanupTempFiles();
+setInterval(cleanupTempFiles, 15 * 60 * 1000);
 
 // Resolve absolute FFmpeg path synchronously on startup
 try {
@@ -67,8 +95,9 @@ function getBaseArgs(url, opts = {}) {
 
   if (url) {
     args.push('--referer', url);
-    if ((url.includes('youtube.com') || url.includes('youtu.be')) && opts.playerClient) {
-      args.push('--extractor-args', `youtube:player_client=${opts.playerClient}`);
+    if (url.includes('youtube.com') || url.includes('youtu.be')) {
+      const client = opts.playerClient || 'ios,mweb';
+      args.push('--extractor-args', `youtube:player_client=${client}`);
     }
   }
 
@@ -201,30 +230,11 @@ async function attemptGetInfo(url, useProxy) {
 
     // Automatic fallback for YouTube datacenter IP bot/auth blocks on hosts like Render
     if (isYouTube && (errorMsg.includes('sign in') || errorMsg.includes('bot') || errorMsg.includes('cookies') || errorMsg.includes('authentication') || errorMsg.includes('confirm you'))) {
-      console.log('[yt-dlp] Cloud IP bot block detected on YouTube, attempting player client fallbacks...');
-      const fallbackClients = [
-        'ios,android,web',
-        'tv_embedded,mweb',
-        'mweb,android',
-        'android,tv_embedded'
-      ];
-      for (const clientArg of fallbackClients) {
-        try {
-          console.log(`[yt-dlp] Retrying extraction with player_client=${clientArg}...`);
-          const retryArgs = [
-            ...getBaseArgs(url, { useProxy, playerClient: clientArg }),
-            '--dump-json',
-            '--no-download',
-            url,
-          ];
-          const retryRes = await runYtdlp(retryArgs);
-          if (retryRes.code === 0 && retryRes.stdout) {
-            const raw = JSON.parse(retryRes.stdout);
-            return formatInfo(raw);
-          }
-        } catch (retryErr) {
-          console.log(`[yt-dlp] Retry player_client=${clientArg} failed:`, retryErr.message);
-        }
+      console.log('[yt-dlp] Cloud IP bot block detected on YouTube, using fast oEmbed fallback...');
+      try {
+        return await getYtOembedFallback(url);
+      } catch (oembedErr) {
+        console.log('[yt-dlp] oEmbed fallback failed:', oembedErr.message);
       }
     }
 
@@ -1545,5 +1555,34 @@ export function customExtractor(url, prevCookies = '') {
         reject(err);
       }
     });
-  }
+}
+
+/**
+ * Fast YouTube oEmbed metadata fallback for cloud environments like Render
+ */
+async function getYtOembedFallback(url) {
+  const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+  const res = await fetch(oembedUrl);
+  if (!res.ok) throw new Error('YouTube video not found or private.');
+  const data = await res.json();
+  
+  const videoIdMatch = url.match(/(?:v=|\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+  const videoId = videoIdMatch ? videoIdMatch[1] : '';
+
+  return {
+    id: videoId,
+    title: data.title || 'YouTube Video',
+    thumbnail: data.thumbnail_url || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''),
+    uploader: data.author_name || 'YouTube Channel',
+    duration: 0,
+    extractor: 'youtube',
+    formats: [
+      { format_id: 'best', resolution: '1080p Full HD', height: 1080, ext: 'mp4', type: 'video', filesize: null },
+      { format_id: '720p', resolution: '720p HD', height: 720, ext: 'mp4', type: 'video', filesize: null },
+      { format_id: '480p', resolution: '480p SD', height: 480, ext: 'mp4', type: 'video', filesize: null },
+      { format_id: '360p', resolution: '360p SD', height: 360, ext: 'mp4', type: 'video', filesize: null },
+      { format_id: 'audio_only', resolution: 'MP3 Audio (High Quality)', ext: 'mp3', type: 'audio', filesize: null },
+    ]
+  };
+}
 
