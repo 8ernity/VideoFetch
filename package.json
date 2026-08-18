@@ -1,6 +1,7 @@
 {
   "name": "videofetch-root",
   "private": true,
+  "main": "electron/main.js",
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -11,7 +12,9 @@
     "dev:client": "npm run dev --prefix client",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "npm install && npm install --prefix server && npm install --prefix client && npm run build --prefix client",
-    "start": "node server/src/index.js"
+    "start": "node server/src/index.js",
+    "start:desktop": "concurrently \"npm run dev:client\" \"wait-on http://localhost:5173 && cross-env IS_ELECTRON=true electron .\"",
+    "build:desktop": "npm run build && electron-builder"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -21,6 +24,32 @@
     "helmet": "^8.0.0"
   },
   "devDependencies": {
-    "concurrently": "^10.0.5"
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.videofetch.app",
+    "productName": "VideoFetch",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "server/**/*",
+      "client/dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "server/bin/yt-dlp.exe",
+        "to": "bin/yt-dlp.exe"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
   }
 }

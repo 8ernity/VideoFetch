@@ -127,6 +127,9 @@ function getBaseArgs(url, opts = {}) {
   if (cookiesFile) {
     console.log(`[yt-dlp] Using cookies file: ${cookiesFile}`);
     args.push('--cookies', cookiesFile);
+  } else if (process.env.IS_ELECTRON === 'true') {
+    console.log(`[yt-dlp] Desktop Mode: Using Chrome browser cookies`);
+    args.push('--cookies-from-browser', 'chrome');
   } else {
     console.log(`[yt-dlp] NO COOKIES FILE FOUND. YouTube downloads may fail with 403/429.`);
   }
