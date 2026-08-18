@@ -1,5 +1,8 @@
 {
   "name": "videofetch-root",
+  "version": "1.0.0",
+  "description": "VideoFetch Desktop App",
+  "author": "VideoFetch",
   "private": true,
   "main": "electron/main.js",
   "type": "module",
