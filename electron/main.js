@@ -1,7 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
 import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,11 +9,17 @@ const __dirname = path.dirname(__filename);
 let mainWindow;
 let serverProcess;
 
-function createWindow() {
+async function createWindow() {
+  const appIconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar/client/dist/logo.png')
+    : path.join(__dirname, '../client/public/logo.png');
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'VideoFetch',
+    icon: appIconPath,
+    backgroundColor: '#000000',
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
@@ -24,29 +29,30 @@ function createWindow() {
 
   const PORT = Math.floor(Math.random() * 10000) + 30000;
 
-  const serverScript = app.isPackaged 
-    ? path.join(process.resourcesPath, 'app.asar/server/src/index.js')
-    : path.join(__dirname, '../server/src/index.js');
-    
   const ytdlpBin = app.isPackaged
     ? path.join(process.resourcesPath, 'bin/yt-dlp.exe')
     : path.join(__dirname, '../server/bin/yt-dlp.exe');
 
-  console.log('[Electron] Starting server at:', serverScript);
   console.log('[Electron] Using yt-dlp binary at:', ytdlpBin);
 
-  serverProcess = spawn('node', [serverScript], {
-    env: {
-      ...process.env,
-      PORT: PORT.toString(),
-      IS_ELECTRON: 'true',
-      YTDLP_PATH: ytdlpBin,
-      NODE_ENV: app.isPackaged ? 'production' : 'development'
-    }
-  });
+  // Set environment variables before loading the server
+  process.env.PORT = PORT.toString();
+  process.env.IS_ELECTRON = 'true';
+  process.env.YTDLP_PATH = ytdlpBin;
+  process.env.NODE_ENV = app.isPackaged ? 'production' : 'development';
 
-  serverProcess.stdout.on('data', (data) => console.log(`[Server]: ${data}`));
-  serverProcess.stderr.on('data', (data) => console.error(`[Server]: ${data}`));
+  // Run the Express server natively in the Electron main process
+  try {
+    const serverModulePath = app.isPackaged 
+      ? path.join(process.resourcesPath, 'app.asar/server/src/index.js')
+      : path.join(__dirname, '../server/src/index.js');
+    
+    // Dynamic import to ensure env vars are applied first
+    await import('file://' + serverModulePath);
+    console.log('[Electron] Internal Express server started successfully.');
+  } catch (err) {
+    console.error('[Electron] Failed to start internal server:', err);
+  }
 
   const checkServer = setInterval(() => {
     http.get(`http://127.0.0.1:${PORT}/api/health`, (res) => {
@@ -75,7 +81,5 @@ app.on('window-all-closed', function () {
 });
 
 app.on('quit', () => {
-  if (serverProcess) {
-    serverProcess.kill();
-  }
+  // Server is running inside the main process now, so it will exit automatically when Electron quits.
 });

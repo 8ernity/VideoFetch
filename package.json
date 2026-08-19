@@ -36,6 +36,7 @@
   "build": {
     "appId": "com.videofetch.app",
     "productName": "VideoFetch",
+    "icon": "client/public/logo.png",
     "directories": {
       "output": "dist-desktop"
     },
