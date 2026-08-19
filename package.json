@@ -40,10 +40,15 @@
       "output": "dist-desktop"
     },
     "files": [
-      "server/**/*",
+      "server/src/**/*",
+      "server/package.json",
       "client/dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!server/temp_downloads/**/*",
+      "!temp_downloads/**/*",
+      "!**/*.mp4",
+      "!**/*.webm"
     ],
     "extraResources": [
       {
