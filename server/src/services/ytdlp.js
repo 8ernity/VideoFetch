@@ -56,17 +56,22 @@ cleanupTempFiles();
 setInterval(cleanupTempFiles, 15 * 60 * 1000);
 
 // Resolve absolute FFmpeg path synchronously on startup
-try {
-  const cmd = process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg';
-  const output = execSync(cmd, { encoding: 'utf8' });
-  FFMPEG_PATH = output.split(/[\r\n]+/)[0].trim();
-  console.log(`[Init] Resolved FFmpeg path: ${FFMPEG_PATH}`);
-} catch (e) {
-  console.warn('[Init] Could not resolve FFmpeg path via CLI, using default "ffmpeg"');
-  const fallback = path.join(process.env.LOCALAPPDATA || '', 'Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe');
-  if (fs.existsSync(fallback)) {
-    FFMPEG_PATH = fallback;
-    console.log(`[Init] Fallback FFmpeg resolved: ${FFMPEG_PATH}`);
+if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+  FFMPEG_PATH = process.env.FFMPEG_PATH;
+  console.log(`[Init] Using provided FFMPEG_PATH: ${FFMPEG_PATH}`);
+} else {
+  try {
+    const cmd = process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg';
+    const output = execSync(cmd, { encoding: 'utf8' });
+    FFMPEG_PATH = output.split(/[\r\n]+/)[0].trim();
+    console.log(`[Init] Resolved FFmpeg path: ${FFMPEG_PATH}`);
+  } catch (e) {
+    console.warn('[Init] Could not resolve FFmpeg path via CLI, using default "ffmpeg"');
+    const fallback = path.join(process.env.LOCALAPPDATA || '', 'Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe');
+    if (fs.existsSync(fallback)) {
+      FFMPEG_PATH = fallback;
+      console.log(`[Init] Fallback FFmpeg resolved: ${FFMPEG_PATH}`);
+    }
   }
 }
 
@@ -127,11 +132,8 @@ function getBaseArgs(url, opts = {}) {
   if (cookiesFile) {
     console.log(`[yt-dlp] Using cookies file: ${cookiesFile}`);
     args.push('--cookies', cookiesFile);
-  } else if (process.env.IS_ELECTRON === 'true') {
-    console.log(`[yt-dlp] Desktop Mode: Using Chrome browser cookies`);
-    args.push('--cookies-from-browser', 'chrome');
   } else {
-    console.log(`[yt-dlp] NO COOKIES FILE FOUND. YouTube downloads may fail with 403/429.`);
+    console.log(`[yt-dlp] NO COOKIES FILE FOUND. YouTube downloads may fail with 403/429 if on a datacenter IP.`);
   }
 
   return args;

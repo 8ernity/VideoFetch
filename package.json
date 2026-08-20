@@ -14,8 +14,8 @@
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "build": "npm install && npm install --prefix server && npm install --prefix client && npm run build --prefix client",
-    "start": "node server/src/index.js",
+    "build": "npm install && npm install --prefix server && npm run build --prefix server && npm install --prefix client && npm run build --prefix client",
+    "start": "node server/dist/server.js",
     "start:desktop": "concurrently \"npm run dev:client\" \"wait-on http://localhost:5173 && cross-env IS_ELECTRON=true electron .\"",
     "build:desktop": "npm run build && electron-builder"
   },
@@ -36,12 +36,12 @@
   "build": {
     "appId": "com.videofetch.app",
     "productName": "VideoFetch",
-    "icon": "client/public/logo.png",
+    "icon": "client/public/icon.ico",
     "directories": {
       "output": "dist-desktop"
     },
     "files": [
-      "server/src/**/*",
+      "server/dist/**/*",
       "server/package.json",
       "client/dist/**/*",
       "electron/**/*",
@@ -51,10 +51,18 @@
       "!**/*.mp4",
       "!**/*.webm"
     ],
+    "asarUnpack": [
+      "server/dist/**/*",
+      "client/**/*"
+    ],
     "extraResources": [
       {
         "from": "server/bin/yt-dlp.exe",
         "to": "bin/yt-dlp.exe"
+      },
+      {
+        "from": "server/bin/ffmpeg.exe",
+        "to": "bin/ffmpeg.exe"
       }
     ],
     "win": {

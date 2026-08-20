@@ -1,4 +1,5 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, session, dialog } from 'electron';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
@@ -22,9 +23,16 @@ async function createWindow() {
     backgroundColor: '#000000',
     autoHideMenuBar: true,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      nodeIntegration: false,
+      contextIsolation: true
     }
+  });
+
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    logDebug(`[Client Console]: ${message} (${sourceId}:${line})`);
+  });
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    logDebug(`[Client Fail Load]: ${errorCode} ${errorDescription} ${validatedURL}`);
   });
 
   const PORT = Math.floor(Math.random() * 10000) + 30000;
@@ -32,45 +40,113 @@ async function createWindow() {
   const ytdlpBin = app.isPackaged
     ? path.join(process.resourcesPath, 'bin/yt-dlp.exe')
     : path.join(__dirname, '../server/bin/yt-dlp.exe');
+    
+  const ffmpegBin = app.isPackaged
+    ? path.join(process.resourcesPath, 'bin/ffmpeg.exe')
+    : path.join(__dirname, '../server/bin/ffmpeg.exe');
 
   console.log('[Electron] Using yt-dlp binary at:', ytdlpBin);
+  console.log('[Electron] Using ffmpeg binary at:', ffmpegBin);
 
   // Set environment variables before loading the server
   process.env.PORT = PORT.toString();
   process.env.IS_ELECTRON = 'true';
   process.env.YTDLP_PATH = ytdlpBin;
+  process.env.FFMPEG_PATH = ffmpegBin;
   process.env.NODE_ENV = app.isPackaged ? 'production' : 'development';
 
-  // Run the Express server natively in the Electron main process
-  try {
-    const serverModulePath = app.isPackaged 
-      ? path.join(process.resourcesPath, 'app.asar/server/src/index.js')
-      : path.join(__dirname, '../server/src/index.js');
+  const debugLogPath = path.join(app.getPath('userData'), 'server_debug.log');
+  fs.writeFileSync(debugLogPath, '[Electron] Starting up...\n');
+  const logDebug = (msg) => {
+    console.log(msg);
+    fs.appendFileSync(debugLogPath, msg + '\n');
+  };
+
+  // Run the Express server as a child process using Electron's internal Node environment
+  const serverScript = app.isPackaged 
+    ? path.join(process.resourcesPath, 'app.asar.unpacked/server/dist/server.js')
+    : path.join(__dirname, '../server/dist/server.js');
     
-    // Dynamic import to ensure env vars are applied first
-    await import('file://' + serverModulePath);
-    console.log('[Electron] Internal Express server started successfully.');
+  logDebug(`[Electron] Starting server at: ${serverScript}`);
+  logDebug(`[Electron] process.execPath: ${process.execPath}`);
+
+  try {
+    const { spawn } = await import('child_process');
+    serverProcess = spawn(process.execPath, [serverScript], {
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        PORT: PORT.toString(),
+        IS_ELECTRON: 'true',
+        YTDLP_PATH: ytdlpBin,
+        FFMPEG_PATH: ffmpegBin,
+        NODE_ENV: app.isPackaged ? 'production' : 'development'
+      }
+    });
+
+    serverProcess.stdout.on('data', (data) => logDebug(`[Server STDOUT]: ${data.toString()}`));
+    serverProcess.stderr.on('data', (data) => logDebug(`[Server STDERR]: ${data.toString()}`));
+    serverProcess.on('error', (err) => logDebug(`[Server ERROR]: ${err.stack || err.message}`));
+    serverProcess.on('exit', (code, signal) => logDebug(`[Server EXIT]: code ${code} signal ${signal}`));
   } catch (err) {
-    console.error('[Electron] Failed to start internal server:', err);
+    logDebug(`[Electron] Failed to spawn internal server: ${err.stack || err.message}`);
   }
 
+  let attempts = 0;
   const checkServer = setInterval(() => {
+    attempts++;
+    logDebug(`[Electron] Checking server health on port ${PORT} (Attempt ${attempts})...`);
     http.get(`http://127.0.0.1:${PORT}/api/health`, (res) => {
       if (res.statusCode === 200) {
+        logDebug(`[Electron] Server is healthy! Loading URL.`);
         clearInterval(checkServer);
         if (app.isPackaged) {
-           mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
+          const indexPath = path.join(process.resourcesPath, 'app.asar.unpacked/client/dist/index.html');
+          const fallbackPath = path.join(__dirname, '../client/dist/index.html');
+          const targetPath = fs.existsSync(indexPath) ? indexPath : fallbackPath;
+          logDebug(`[Electron] Loading UI from: ${targetPath}`);
+          mainWindow.loadFile(targetPath, { query: { port: PORT.toString() } });
         } else {
-           mainWindow.loadURL(`http://localhost:5173`);
+          mainWindow.loadURL(`http://localhost:5173`);
         }
       }
-    }).on('error', () => {
-      // ignore, keep waiting
+    }).on('error', (err) => {
+      logDebug(`[Electron] Health check failed: ${err.message}`);
+      if (attempts > 20) {
+        clearInterval(checkServer);
+        logDebug(`[Electron] Giving up after 20 attempts.`);
+      }
     });
-  }, 500);
+  }, 1000);
 
   mainWindow.on('closed', function () {
     mainWindow = null;
+  });
+
+  // Handle native downloads triggered by the hidden iframe in the React frontend
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    // We can let Electron handle the save dialog natively
+    // Or we could set a default path: item.setSavePath(path.join(app.getPath('downloads'), item.getFilename()));
+    
+    item.on('updated', (event, state) => {
+      if (state === 'interrupted') {
+        console.log('Download is interrupted but can be resumed');
+      } else if (state === 'progressing') {
+        if (item.isPaused()) {
+          console.log('Download is paused');
+        } else {
+          console.log(`Received bytes: ${item.getReceivedBytes()}`);
+        }
+      }
+    });
+    
+    item.once('done', (event, state) => {
+      if (state === 'completed') {
+        console.log('Download successfully completed');
+      } else {
+        console.log(`Download failed: ${state}`);
+      }
+    });
   });
 }
 
@@ -81,5 +157,7 @@ app.on('window-all-closed', function () {
 });
 
 app.on('quit', () => {
-  // Server is running inside the main process now, so it will exit automatically when Electron quits.
+  if (serverProcess) {
+    serverProcess.kill();
+  }
 });

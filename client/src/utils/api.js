@@ -2,7 +2,18 @@
  * API client for the VideoFetch backend.
  */
 
-const BASE = '/api/video';
+function getApiBase() {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const port = params.get('port') || window.API_PORT;
+    if (port) {
+      return `http://127.0.0.1:${port}/api/video`;
+    }
+  }
+  return '/api/video';
+}
+
+const BASE = getApiBase();
 
 /**
  * Fetch video metadata and available formats.
