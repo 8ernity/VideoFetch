@@ -102,11 +102,17 @@ router.get('/download', validateDownloadParams, async (req, res) => {
       : null;
 
     const setDownloadHeaders = () => {
-      const encodedName = encodeURIComponent(`${title}.${ext}`);
-      res.setHeader('Content-Disposition', `attachment; filename="video.${ext}"; filename*=UTF-8''${encodedName}`);
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Accept-Ranges', 'none');
+      if (!res.headersSent) {
+        const safeName = sanitizeFilename(title);
+        const encodedName = encodeURIComponent(`${safeName}.${ext}`);
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}.${ext}"; filename*=UTF-8''${encodedName}`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Accept-Ranges', 'none');
+      }
     };
+
+    // Trigger download headers immediately so Electron / browser opens save dialog instantly
+    setDownloadHeaders();
 
     try {
       await streamDownload(req.videoUrl, req.formatId, req.videoType, res, setDownloadHeaders, false, trimOpts);
