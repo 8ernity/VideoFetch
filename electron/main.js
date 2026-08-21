@@ -4,6 +4,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
 
+// Disable GPU hardware acceleration to prevent Windows Gpu Cache Access Denied black screen crashes
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -58,39 +63,41 @@ async function createWindow() {
 
   const debugLogPath = path.join(app.getPath('userData'), 'server_debug.log');
   fs.writeFileSync(debugLogPath, '[Electron] Starting up...\n');
-  const logDebug = (msg) => {
+
+  function logDebug(msg) {
     console.log(msg);
-    fs.appendFileSync(debugLogPath, msg + '\n');
-  };
+    try {
+      fs.appendFileSync(debugLogPath, msg + '\n');
+    } catch (e) {}
+  }
 
-  // Run the Express server as a child process using Electron's internal Node environment
-  const serverScript = app.isPackaged 
-    ? path.join(process.resourcesPath, 'app.asar.unpacked/server/dist/server.js')
-    : path.join(__dirname, '../server/dist/server.js');
-    
-  logDebug(`[Electron] Starting server at: ${serverScript}`);
-  logDebug(`[Electron] process.execPath: ${process.execPath}`);
+  // Spawn internal backend server process in production mode
+  if (app.isPackaged) {
+    const serverScript = path.join(app.getAppPath(), 'server/dist/server.js');
+    logDebug(`[Electron] Starting server at: ${serverScript}`);
+    logDebug(`[Electron] process.execPath: ${process.execPath}`);
 
-  try {
-    const { spawn } = await import('child_process');
-    serverProcess = spawn(process.execPath, [serverScript], {
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
-        PORT: PORT.toString(),
-        IS_ELECTRON: 'true',
-        YTDLP_PATH: ytdlpBin,
-        FFMPEG_PATH: ffmpegBin,
-        NODE_ENV: app.isPackaged ? 'production' : 'development'
-      }
-    });
+    try {
+      const childEnv = { 
+        ...process.env, 
+        ELECTRON_RUN_AS_NODE: '1', 
+        PORT: PORT.toString(), 
+        IS_ELECTRON: 'true', 
+        YTDLP_PATH: ytdlpBin, 
+        FFMPEG_PATH: ffmpegBin 
+      };
+      serverProcess = (await import('child_process')).spawn(process.execPath, [serverScript], {
+        env: childEnv,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
 
-    serverProcess.stdout.on('data', (data) => logDebug(`[Server STDOUT]: ${data.toString()}`));
-    serverProcess.stderr.on('data', (data) => logDebug(`[Server STDERR]: ${data.toString()}`));
-    serverProcess.on('error', (err) => logDebug(`[Server ERROR]: ${err.stack || err.message}`));
-    serverProcess.on('exit', (code, signal) => logDebug(`[Server EXIT]: code ${code} signal ${signal}`));
-  } catch (err) {
-    logDebug(`[Electron] Failed to spawn internal server: ${err.stack || err.message}`);
+      serverProcess.stdout.on('data', (data) => logDebug(`[Server STDOUT]: ${data.toString()}`));
+      serverProcess.stderr.on('data', (data) => logDebug(`[Server STDERR]: ${data.toString()}`));
+      serverProcess.on('error', (err) => logDebug(`[Server ERROR]: ${err.stack || err.message}`));
+      serverProcess.on('exit', (code, signal) => logDebug(`[Server EXIT]: code ${code} signal ${signal}`));
+    } catch (err) {
+      logDebug(`[Electron] Failed to spawn internal server: ${err.stack || err.message}`);
+    }
   }
 
   let attempts = 0;
@@ -102,11 +109,8 @@ async function createWindow() {
         logDebug(`[Electron] Server is healthy! Loading URL.`);
         clearInterval(checkServer);
         if (app.isPackaged) {
-          const indexPath = path.join(process.resourcesPath, 'app.asar.unpacked/client/dist/index.html');
-          const fallbackPath = path.join(__dirname, '../client/dist/index.html');
-          const targetPath = fs.existsSync(indexPath) ? indexPath : fallbackPath;
-          logDebug(`[Electron] Loading UI from: ${targetPath}`);
-          mainWindow.loadFile(targetPath, { query: { port: PORT.toString() } });
+          logDebug(`[Electron] Loading UI from HTTP server: http://127.0.0.1:${PORT}`);
+          mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
         } else {
           mainWindow.loadURL(`http://localhost:5173`);
         }
@@ -154,7 +158,21 @@ async function createWindow() {
   });
 }
 
-app.on('ready', createWindow);
+// Single instance lock to strictly prevent multiple VideoFetch app instances/windows from opening
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.on('ready', createWindow);
+}
 
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit();

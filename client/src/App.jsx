@@ -12,7 +12,7 @@ import Help from './components/Help';
 import { useClipboard } from './hooks/useClipboard';
 import { useDownloadHistory } from './hooks/useDownloadHistory';
 import { useAppSettings } from './hooks/useAppSettings';
-import { fetchVideoInfo, getDownloadUrl } from './utils/api';
+import { fetchVideoInfo, getDownloadUrl, downloadWithProgress, triggerBlobDownload } from './utils/api';
 import { calculateEstimatedBytes, formatBytes } from './utils/formatters';
 
 export default function App() {
@@ -29,11 +29,12 @@ export default function App() {
   const [error, setError] = useState(null);
   const [notification, setNotification] = useState(null);
 
-  const trimDataRef = useRef(null);
-
   const { clipboardUrl, dismiss: dismissClipboard } = useClipboard();
-  const { history, addToHistory, clearHistory, removeItem } = useDownloadHistory();
+  const { history, addToHistory, removeItem, clearHistory } = useDownloadHistory();
   const { settings, updateSetting, resetSettings } = useAppSettings();
+
+  const trimDataRef = useRef(trimData);
+  trimDataRef.current = trimData;
 
   /* Fetch real video metadata from backend API */
   const handleFetch = useCallback(async () => {
@@ -60,11 +61,11 @@ export default function App() {
     if (!videoInfo || !selectedFormat) return;
     setDownloading(true);
     setDownloadProgress({
-      percent: 15,
-      speed: 'Preparing stream...',
+      percent: 5,
+      speed: 'Initializing connection...',
       downloaded: '0 MB',
-      total: selectedFormat.filesize ? `${Math.round(selectedFormat.filesize / 1024 / 1024)} MB` : 'Calculating...',
-      eta: 'Downloading...',
+      total: selectedFormat.filesize ? formatBytes(selectedFormat.filesize) : 'Calculating...',
+      eta: 'Connecting...',
     });
     setError(null);
 
@@ -80,16 +81,37 @@ export default function App() {
         trim && trim.enabled ? trim.endTime : null
       );
 
-      // Trigger native instant download link
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `${videoInfo.title}.${selectedFormat.ext || 'mp4'}`;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        if (document.body.contains(a)) document.body.removeChild(a);
-      }, 10000);
+      let startTime = Date.now();
+      let lastLoaded = 0;
+      let lastTime = Date.now();
+
+      const blob = await downloadWithProgress(downloadUrl, ({ loaded, total, percent }) => {
+        const now = Date.now();
+        const timeDiff = (now - lastTime) / 1000;
+        let speedStr = 'Downloading...';
+        
+        if (timeDiff > 0.5) {
+          const bytesDiff = loaded - lastLoaded;
+          const bytesPerSec = bytesDiff / timeDiff;
+          speedStr = `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`;
+          lastLoaded = loaded;
+          lastTime = now;
+        }
+
+        const downloadedStr = formatBytes(loaded);
+        const totalStr = total ? formatBytes(total) : 'Stream';
+        
+        setDownloadProgress({
+          percent: percent || 50,
+          speed: speedStr,
+          downloaded: downloadedStr,
+          total: totalStr,
+          eta: percent && percent > 0 ? `${Math.ceil(((100 - percent) * (now - startTime)) / percent / 1000)}s` : 'Downloading...',
+        });
+      });
+
+      const fileName = `${videoInfo.title}.${selectedFormat.ext || 'mp4'}`;
+      triggerBlobDownload(blob, fileName);
 
       // Add real download item to history
       addToHistory({
@@ -98,17 +120,18 @@ export default function App() {
         thumbnail: videoInfo.thumbnail,
         format: `${selectedFormat.resolution || selectedFormat.quality || 'HD'} ${selectedFormat.ext ? selectedFormat.ext.toUpperCase() : 'MP4'}`.trim(),
         channel: videoInfo.uploader || 'Public Stream',
-        size: selectedFormat.filesize ? `${(selectedFormat.filesize / 1024 / 1024).toFixed(1)} MB` : 'Stream File',
+        size: formatBytes(blob.size),
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         url,
       });
 
       setDownloading(false);
-      setNotification('Download initiated! Check your browser downloads.');
+      setNotification('Download completed successfully!');
       setTimeout(() => setNotification(null), 4000);
 
     } catch (err) {
-      setError(err.message || 'Download initialization failed.');
+      console.error('[Download Error]', err);
+      setError(err.message || 'Download failed. Please check your network connection.');
       setDownloading(false);
     }
   }, [videoInfo, selectedFormat, url, addToHistory]);

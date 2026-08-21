@@ -112,7 +112,7 @@ function getBaseArgs(url, opts = {}) {
       args.push('--referer', url);
     }
     if (isYouTube) {
-      args.push('--extractor-args', `youtube:player_client=mweb,default`);
+      args.push('--extractor-args', `youtube:player_client=android_vr,mweb,ios,default`);
     }
   }
 
