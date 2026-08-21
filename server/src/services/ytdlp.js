@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { spawn, execSync } from 'child_process';
+import os from 'os';
 import { formatBytes, formatDuration } from '../utils/helpers.js';
 
 import { fileURLToPath } from 'url';
@@ -24,13 +25,15 @@ const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
 let FFMPEG_PATH = 'ffmpeg'; // default
 const TIMEOUT_MS = 120_000;
 const PROXY = process.env.PROXY_URL || '';
-const TEMP_DIR = process.env.NODE_ENV === 'production' 
-  ? '/tmp' 
-  : path.resolve(SERVER_ROOT, 'temp_downloads');
+const TEMP_DIR = process.env.TEMP_DIR || path.join(os.tmpdir(), 'videofetch_downloads');
 
 // Ensure temp directory exists
-if (process.env.NODE_ENV !== 'production' && !fs.existsSync(TEMP_DIR)) {
-  fs.mkdirSync(TEMP_DIR, { recursive: true });
+if (!fs.existsSync(TEMP_DIR)) {
+  try {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+  } catch (e) {
+    console.error('[Init] Failed to create TEMP_DIR:', e.message);
+  }
 }
 
 // Auto-cleanup stale temporary files older than 30 minutes
@@ -119,7 +122,7 @@ function getBaseArgs(url, opts = {}) {
   }
 
 
-  const defaultCookiesPath = path.resolve(TEMP_DIR, '../cookies.txt');
+  const defaultCookiesPath = path.resolve(SERVER_ROOT, 'cookies.txt');
   const envCookiesPath = process.env.COOKIES_FILE ? path.resolve(process.env.COOKIES_FILE) : null;
   
   if (envCookiesPath) {

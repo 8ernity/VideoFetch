@@ -80,14 +80,16 @@ export default function App() {
         trim && trim.enabled ? trim.endTime : null
       );
 
-      // Trigger native instant browser streaming download via hidden iframe
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = downloadUrl;
-      document.body.appendChild(iframe);
+      // Trigger native instant download link
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `${videoInfo.title}.${selectedFormat.ext || 'mp4'}`;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
       setTimeout(() => {
-        if (document.body.contains(iframe)) document.body.removeChild(iframe);
-      }, 3600000); // 1 hour timeout for large 4K files
+        if (document.body.contains(a)) document.body.removeChild(a);
+      }, 10000);
 
       // Add real download item to history
       addToHistory({

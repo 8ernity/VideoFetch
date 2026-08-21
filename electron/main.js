@@ -24,7 +24,8 @@ async function createWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      webSecurity: false
     }
   });
 
@@ -123,28 +124,31 @@ async function createWindow() {
     mainWindow = null;
   });
 
-  // Handle native downloads triggered by the hidden iframe in the React frontend
+  // Handle native downloads in Electron session
   session.defaultSession.on('will-download', (event, item, webContents) => {
-    // We can let Electron handle the save dialog natively
-    // Or we could set a default path: item.setSavePath(path.join(app.getPath('downloads'), item.getFilename()));
+    const filename = item.getFilename();
+    const downloadsDir = app.getPath('downloads');
+    const savePath = path.join(downloadsDir, filename);
+
+    // Auto-set the save path directly into the user's Downloads directory
+    try {
+      item.setSavePath(savePath);
+      logDebug(`[Download] Native savePath set to: ${savePath}`);
+    } catch (e) {
+      logDebug(`[Download] Error setting save path: ${e.message}`);
+    }
     
     item.on('updated', (event, state) => {
-      if (state === 'interrupted') {
-        console.log('Download is interrupted but can be resumed');
-      } else if (state === 'progressing') {
-        if (item.isPaused()) {
-          console.log('Download is paused');
-        } else {
-          console.log(`Received bytes: ${item.getReceivedBytes()}`);
-        }
+      if (state === 'progressing') {
+        logDebug(`[Download Progress]: ${item.getReceivedBytes()} / ${item.getTotalBytes()}`);
       }
     });
     
     item.once('done', (event, state) => {
       if (state === 'completed') {
-        console.log('Download successfully completed');
+        logDebug(`[Download Completed]: ${savePath}`);
       } else {
-        console.log(`Download failed: ${state}`);
+        logDebug(`[Download Failed/Cancelled]: ${state}`);
       }
     });
   });
