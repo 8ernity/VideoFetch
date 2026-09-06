@@ -20,30 +20,34 @@ export default function VideoPreview({ info, selectedFormat, videoUrl, onDuratio
     ? `/api/video/stream?url=${encodeURIComponent(videoUrl)}&format_id=${encodeURIComponent(streamFormatId)}`
     : null;
 
+  const isYouTube = videoUrl && (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be'));
+  const youtubeIdMatch = videoUrl ? videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/) : null;
+  const youtubeId = youtubeIdMatch ? youtubeIdMatch[1] : null;
+
   return (
     <div className="glass-panel rounded-xl overflow-hidden flex flex-col border border-white/10 glow-active">
       {/* Video Player / Thumbnail Area */}
       <div className="relative aspect-video bg-black flex items-center justify-center group overflow-hidden">
         {isPlaying ? (
-            <video
-              controls
-              autoPlay
-              preload="auto"
-              playsInline
-              src={proxiedStreamUrl}
-              onError={() => {
-                console.warn('[VideoPreview] Stream playback failed, reverting to thumbnail preview.');
-                setIsPlaying(false);
-              }}
-              onLoadedMetadata={(e) => {
-                if (e.target.duration && typeof onDurationDetected === 'function') {
-                  onDurationDetected(e.target.duration);
-                }
-              }}
-              className="w-full h-full object-contain bg-black"
-            >
-              Your browser does not support HTML5 video playback.
-            </video>
+          <video
+            controls
+            autoPlay
+            preload="auto"
+            playsInline
+            src={proxiedStreamUrl}
+            onError={() => {
+              console.warn('[VideoPreview] Stream playback failed, reverting to thumbnail preview.');
+              setIsPlaying(false);
+            }}
+            onLoadedMetadata={(e) => {
+              if (e.target.duration && typeof onDurationDetected === 'function') {
+                onDurationDetected(e.target.duration);
+              }
+            }}
+            className="w-full h-full object-contain bg-black"
+          >
+            Your browser does not support HTML5 video playback.
+          </video>
         ) : (
           <>
             {/* Thumbnail Display */}

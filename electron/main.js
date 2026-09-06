@@ -130,9 +130,20 @@ async function createWindow() {
 
   // Handle native downloads in Electron session
   session.defaultSession.on('will-download', (event, item, webContents) => {
-    const filename = item.getFilename();
+    const originalFilename = item.getFilename();
     const downloadsDir = app.getPath('downloads');
-    const savePath = path.join(downloadsDir, filename);
+    let filename = originalFilename;
+    let savePath = path.join(downloadsDir, filename);
+
+    // Ensure unique filename to prevent overwriting previous downloads
+    let counter = 1;
+    while (fs.existsSync(savePath)) {
+      const ext = path.extname(originalFilename);
+      const base = path.basename(originalFilename, ext);
+      filename = `${base} (${counter})${ext}`;
+      savePath = path.join(downloadsDir, filename);
+      counter++;
+    }
 
     // Auto-set the save path directly into the user's Downloads directory
     try {

@@ -21,7 +21,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SERVER_ROOT = path.resolve(__dirname, '../../');
 
-const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
+let YTDLP = 'yt-dlp';
+const possibleYtPaths = [
+  process.env.YTDLP_PATH,
+  path.join(SERVER_ROOT, 'server/bin/yt-dlp.exe'),
+  path.join(process.cwd(), 'bin/yt-dlp.exe'),
+  path.join(path.dirname(process.execPath), 'resources/bin/yt-dlp.exe')
+].filter(Boolean);
+
+for (const p of possibleYtPaths) {
+  if (fs.existsSync(p)) {
+    YTDLP = p;
+    break;
+  }
+}
+console.log(`[Init] Resolved YTDLP path: ${YTDLP}`);
+
 let FFMPEG_PATH = 'ffmpeg'; // default
 const TIMEOUT_MS = 120_000;
 const PROXY = process.env.PROXY_URL || '';
@@ -243,7 +258,8 @@ async function attemptGetInfo(url, useProxy) {
     result = await runYtdlp(args);
   } catch (err) {
     if (err.code === 'ENOENT') {
-      throw new Error('yt-dlp is not installed or not found on PATH. Please install it first.');
+      const tempExists = fs.existsSync(TEMP_DIR);
+      throw new Error(`yt-dlp is not installed or not found on PATH. Executable: ${YTDLP}. TempDir: ${TEMP_DIR} (exists: ${tempExists}). EnvPath: ${process.env.YTDLP_PATH}`);
     }
     throw err;
   }
@@ -908,7 +924,19 @@ function formatInfo(raw) {
 function deduplicateFormats(formats) {
   const seen = new Map();
   for (const f of formats) {
-    const key = `${f.ext}-${f.resolution || f.quality}-${f.type}`;
+    let parsedHeight = f.height;
+    if (!parsedHeight) {
+      if (f.resolution && typeof f.resolution === 'string') {
+        const match = f.resolution.match(/(\d+)p|x(\d+)/i);
+        if (match) parsedHeight = parseInt(match[1] || match[2], 10);
+      }
+    }
+    if (!parsedHeight && f.quality && typeof f.quality === 'string') {
+      const match = f.quality.match(/(\d+)p/i);
+      if (match) parsedHeight = parseInt(match[1], 10);
+    }
+    const heightKey = parsedHeight || (f.resolution || f.quality || 'unknown').toString().replace(/\D/g, '').substring(0, 4) || '0';
+    const key = `${f.ext}-${heightKey}-${f.type}`;
     const existing = seen.get(key);
     if (!existing) {
       seen.set(key, f);
@@ -918,7 +946,9 @@ function deduplicateFormats(formats) {
       const newIsH264 = f.vcodec && f.vcodec.startsWith('avc1');
       if (newIsH264 && !existingIsH264) {
         seen.set(key, f);
-      } else if (!existingIsH264 && !newIsH264 && f.filesize && f.filesize > (existing.filesize || 0)) {
+      } else if (!existingIsH264 && !newIsH264 && (f.filesize || f.filesize_approx) > (existing.filesize || existing.filesize_approx || 0)) {
+        seen.set(key, f);
+      } else if (existingIsH264 && newIsH264 && (f.filesize || f.filesize_approx) > (existing.filesize || existing.filesize_approx || 0)) {
         seen.set(key, f);
       }
     }
@@ -929,8 +959,8 @@ function deduplicateFormats(formats) {
     const ta = typeOrder[a.type] ?? 2;
     const tb = typeOrder[b.type] ?? 2;
     if (ta !== tb) return ta - tb;
-    const ra = parseInt(a.resolution) || 0;
-    const rb = parseInt(b.resolution) || 0;
+    const ra = a.height || parseInt(String(a.resolution || '').replace(/\D/g, '')) || 0;
+    const rb = b.height || parseInt(String(b.resolution || '').replace(/\D/g, '')) || 0;
     return rb - ra;
   });
   return arr;
